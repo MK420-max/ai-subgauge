@@ -1,0 +1,31 @@
+{
+  "codex": [
+    "codex",
+    "Codex",
+    "ChatGPT"
+  ],
+  "grok": [
+    "grok",
+    "Grok Bot",
+    "Grok"
+  ],
+  "claude": [
+    "claude",
+    "Claude"
+  ],
+  "gemini": [
+    "gemini"
+  ],
+  "copilot": [
+    "copilot",
+    "GitHub Copilot"
+  ],
+  "kimi": [
+    "kimi",
+    "Kimi"
+  ],
+  "glm": [
+    "glm",
+    "zai"
+  ]
+}

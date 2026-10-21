@@ -1,0 +1,23 @@
+# Local-only material (never published)
+_archive/
+_staging/
+_reports/
+oss-prep-audit/
+shared/brand/mockups/
+shared/brand/reference-*.jpg
+shared/logo-src/*.icns
+.DS_Store
+._*
+# Build output
+**/.build/
+**/dist/
+**/bin/
+**/obj/
+**/publish/
+**/tests/artifacts/
+*.exe
+*.app/
+*.dmg
+*.zip
+*.log
+shared/private-logos/
