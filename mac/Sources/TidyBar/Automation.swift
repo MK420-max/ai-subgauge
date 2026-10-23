@@ -243,8 +243,8 @@ struct AutomationSettingsView: View {
     private let kinds = [("app", L10n.text("automation.frontmost.app")), ("time", L10n.text("automation.daily.time.range")), ("battery", L10n.text("automation.battery.at.or.below")), ("display", L10n.text("automation.display.count")), ("wifi", L10n.text("automation.wi.fi.network")), ("focus", L10n.text("automation.focus.scene"))]
 
     var body: some View {
-        Form {
-            Section {
+        SettingsPage {
+            SettingsGroup(title: L10n.text("automation.rule")) {
                 Text(L10n.text("automation.switch.presets.when.conditions.match.if.several"))
                     .foregroundStyle(.secondary)
                 if store.config.presets.isEmpty { Text(L10n.text("automation.save.a.layout.on.the.presets.page")).foregroundStyle(.orange) }
@@ -252,12 +252,21 @@ struct AutomationSettingsView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             TextField(L10n.text("automation.rule.name"), text: $rule.name)
-                            Toggle(L10n.text("automation.enabled"), isOn: $rule.enabled).fixedSize()
                             Button(role: .destructive) { store.config.triggers.removeAll { $0.id == rule.id } } label: { Image(systemName: "trash") }.help(L10n.text("automation.delete.rule"))
                         }
+                        Toggle(L10n.text("automation.enabled"), isOn: $rule.enabled)
                         HStack {
                             Picker(L10n.text("automation.condition"), selection: $rule.kind) { ForEach(kinds, id: \.0) { key, label in Text(label).tag(key) } }.frame(width: 205)
-                            TextField(placeholder(rule.kind), text: $rule.value)
+                            if rule.kind == "battery" || rule.kind == "display" {
+                                Stepper(value: Binding(
+                                    get: { Int(rule.value) ?? (rule.kind == "battery" ? 0 : 1) },
+                                    set: { rule.value = String($0) }
+                                ), in: rule.kind == "battery" ? 0...100 : 1...32) {
+                                    Text(rule.value.isEmpty ? placeholder(rule.kind) : rule.value).monospacedDigit()
+                                }
+                            } else {
+                                TextField(placeholder(rule.kind), text: $rule.value)
+                            }
                         }
                         Picker(L10n.text("menu.apply.preset"), selection: $rule.presetID) {
                             Text(L10n.text("automation.select.a.preset")).tag(nil as UUID?)
@@ -277,13 +286,13 @@ struct AutomationSettingsView: View {
                     var draft = TriggerRule(); draft.enabled = false
                     store.config.triggers.append(draft)
                 }.disabled(store.config.triggers.count >= 200)
-            } header: { Text(L10n.text("automation.rule")) }
-            Section(L10n.text("automation.current.status")) {
+            }
+            SettingsGroup(title: L10n.text("automation.current.status")) {
                 if let controller = AutomationController.shared {
                     AutomationStatusView(controller: controller)
                 } else { Text(L10n.text("automation.the.automation.service.has.not.started")) }
             }
-        }.formStyle(.grouped)
+        }
     }
 
     private func placeholder(_ kind: String) -> String {

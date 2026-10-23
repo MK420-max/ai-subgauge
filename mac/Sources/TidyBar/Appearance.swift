@@ -280,12 +280,12 @@ struct AppearanceSettingsView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12))
     }
     var body: some View {
-        Form {
-            Section(L10n.text("appearance.menu.bar.preview")) {
+        SettingsPage {
+            SettingsGroup(title: L10n.text("appearance.menu.bar.preview")) {
                 preview
                 Text(L10n.text("appearance.the.preview.uses.the.same.appearance.as")).font(.caption).foregroundStyle(.secondary)
             }
-            Section(L10n.text("appearance.background")) {
+            SettingsGroup(title: L10n.text("appearance.background")) {
                 Toggle(L10n.text("appearance.enable.custom.appearance"), isOn: $store.config.style.enabled)
                 ColorPicker(L10n.text("appearance.background.color"), selection: color(\.color), supportsOpacity: false)
                 Toggle(L10n.text("appearance.gradient.background"), isOn: $store.config.style.gradient)
@@ -313,7 +313,7 @@ struct AppearanceSettingsView: View {
                 Toggle(L10n.text("appearance.split.into.left.and.right.capsules"), isOn: $store.config.style.split)
                 Toggle(L10n.text("appearance.use.black.behind.the.notch"), isOn: $store.config.style.hideNotch)
             }
-            Section(L10n.text("appearance.outline")) {
+            SettingsGroup(title: L10n.text("appearance.outline")) {
                 HStack { Text(L10n.text("appearance.corner.radius")); Slider(value: $store.config.style.cornerRadius, in: 0...50); Text("\(Int(store.config.style.cornerRadius))") }
                 Toggle(L10n.text("appearance.round.top.corners"), isOn: optionalBool(\.roundTop, fallback: true))
                 Toggle(L10n.text("appearance.round.bottom.corners"), isOn: optionalBool(\.roundBottom, fallback: true)).disabled(store.config.style.roundUnderMenuBar == true)
@@ -325,7 +325,7 @@ struct AppearanceSettingsView: View {
                 ColorPicker((store.config.style.linkBorderColors ?? true) ? L10n.text("appearance.border.color") : L10n.text("appearance.light.border.color"), selection: color(\.borderColor), supportsOpacity: false)
                 Toggle(L10n.text("appearance.soft.shadow"), isOn: $store.config.style.shadow)
             }
-            Section(L10n.text("appearance.dark.mode")) {
+            SettingsGroup(title: L10n.text("appearance.dark.mode")) {
                 Toggle(L10n.text("appearance.change.background.color.with.system.dark.mode"), isOn: $store.config.style.useDarkStyle)
                 if store.config.style.useDarkStyle {
                     ColorPicker(L10n.text("appearance.dark.background.color"), selection: color(\.darkColor), supportsOpacity: false)
@@ -334,6 +334,6 @@ struct AppearanceSettingsView: View {
                 Toggle(L10n.text("appearance.use.the.same.border.in.light.and"), isOn: optionalBool(\.linkBorderColors, fallback: true))
                 if store.config.style.linkBorderColors == false { ColorPicker(L10n.text("appearance.dark.border.color"), selection: darkBorderColor, supportsOpacity: false) }
             }
-        }.formStyle(.grouped)
+        }
     }
 }

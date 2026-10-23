@@ -1,6 +1,7 @@
 import CoreFoundation
 import Darwin
 import Foundation
+import OSLog
 
 /// First-party account credits only. Never invokes Grok, a prompt, or a model endpoint.
 enum GrokBuildUsageSource {
@@ -30,13 +31,7 @@ enum GrokBuildUsageSource {
     }
 
     private static func fetchAuthenticated(_ initial: Credential, authURL: URL) async throws -> AIUsageSnapshot {
-        var credential = initial
-        if credential.expiresAt <= Date().addingTimeInterval(15) {
-            guard credential.canRefresh, let cli = installedCLI() else {
-                throw AIUsageError.unavailable(L10n.text("error.your.grok.login.has.expired.reconnect.grok"))
-            }
-            credential = try await refreshCredential(executable: cli, authURL: authURL, expected: credential)
-        }
+        let credential = try await credentialForBilling(initial, authURL: authURL)
         let blocker = GrokBuildRedirectBlocker()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpShouldSetCookies = false
@@ -48,6 +43,31 @@ enum GrokBuildUsageSource {
         let session = URLSession(configuration: configuration, delegate: blocker, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         return try await fetchBilling(credential) { try await loadBilling($0, session: session) }
+    }
+
+    /// Refresh within 15 seconds of expiry; dependencies keep tests offline.
+    static func credentialForBilling(_ initial: Credential, authURL: URL, now: Date = Date(),
+        cli: () -> URL? = { installedCLI() },
+        renew: (URL, URL, Credential) async throws -> Credential = { try await refreshCredential(executable: $0, authURL: $1, expected: $2) }
+    ) async throws -> Credential {
+        guard initial.expiresAt <= now.addingTimeInterval(15) else { return initial }
+        guard initial.canRefresh, let executable = cli() else {
+            throw AIUsageError.unavailable(L10n.text("error.your.grok.login.has.expired.reconnect.grok"))
+        }
+        return try await renew(executable, authURL, initial)
+    }
+
+    enum RenewalEvent {
+        case refreshed(expiresIn: Int), failed
+        var message: String {
+            switch self {
+            case .refreshed(let seconds): return "grok token refreshed, expires in \(seconds)s"
+            case .failed: return "grok token refresh failed; reconnect or retry"
+            }
+        }
+        static func log(_ event: Self) {
+            Logger(subsystem: AppIdentifiers.bundleID, category: "grok-renewal").info("\(event.message, privacy: .public)")
+        }
     }
 
     static func loadBilling(_ request: URLRequest, session: URLSession) async throws -> (Data, URLResponse) {
@@ -217,7 +237,29 @@ enum GrokBuildUsageSource {
     }
 
     /// The official ACP handler only runs get_valid_token; it does not invoke authenticate or a prompt.
-    static func refreshCredential(executable: URL, authURL: URL, expected: Credential, timeout: TimeInterval = 20, onLaunch: ((pid_t) -> Void)? = nil, verifyCLI: ((URL) throws -> Void)? = nil) async throws -> Credential {
+    static func refreshCredential(executable: URL, authURL: URL, expected: Credential, timeout: TimeInterval = 20,
+        onLaunch: ((pid_t) -> Void)? = nil, verifyCLI: ((URL) throws -> Void)? = nil,
+        log: @escaping (RenewalEvent) -> Void = RenewalEvent.log
+    ) async throws -> Credential {
+        try Task.checkCancellation()
+        let refreshed = try await GrokCredentialRenewals.shared.refresh(at: authURL.standardizedFileURL) {
+            do {
+                return try await performRefresh(executable: executable, authURL: authURL, expected: expected,
+                    timeout: timeout, onLaunch: onLaunch, verifyCLI: verifyCLI, log: log)
+            } catch {
+                log(.failed)
+                throw error
+            }
+        }
+        guard refreshed.userID == expected.userID, refreshed.clientID == expected.clientID else {
+            throw AIUsageError.unavailable(L10n.text("error.the.current.grok.account.has.changed.reconnect"))
+        }
+        return refreshed
+    }
+
+    private static func performRefresh(executable: URL, authURL: URL, expected: Credential, timeout: TimeInterval,
+        onLaunch: ((pid_t) -> Void)?, verifyCLI: ((URL) throws -> Void)?, log: @escaping (RenewalEvent) -> Void
+    ) async throws -> Credential {
         guard expected.canRefresh else { throw AIUsageError.unavailable(L10n.text("error.your.grok.login.cannot.be.renewed.automatically")) }
         try Task.checkCancellation()
         let worker = Task.detached(priority: .utility) {
@@ -225,6 +267,8 @@ enum GrokBuildUsageSource {
                   current.userID == expected.userID, current.clientID == expected.clientID else {
                 throw AIUsageError.unavailable(L10n.text("error.the.current.grok.account.has.changed.reconnect"))
             }
+            // A preceding request may already have renewed this account on disk.
+            if current.expiresAt > Date().addingTimeInterval(15) { return current }
             let prepared = try GrokCLITrust.prepare(executable, verifyCLI: verifyCLI)
             defer { prepared.cleanup() }
             var restriction: Result<Void, Error> = .success(())
@@ -238,6 +282,7 @@ enum GrokBuildUsageSource {
                   refreshed.clientID == expected.clientID else {
                 throw AIUsageError.unavailable(L10n.text("error.grok.renewal.did.not.return.a.valid"))
             }
+            log(.refreshed(expiresIn: max(0, Int(refreshed.expiresAt.timeIntervalSinceNow))))
             return refreshed
         }
         return try await withTaskCancellationHandler {
@@ -317,5 +362,53 @@ private final class GrokBuildRedirectBlocker: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)
+    }
+}
+
+/// One renewal per official store; each caller owns only its continuation.
+actor GrokCredentialRenewals {
+    static let shared = GrokCredentialRenewals()
+    struct Entry {
+        let id: UUID
+        let task: Task<Void, Never>
+        var waiters: [UUID: CheckedContinuation<GrokBuildUsageSource.Credential, Error>]
+    }
+    private(set) var pending: [URL: Entry] = [:]
+
+    func refresh(at url: URL, operation: @escaping () async throws -> GrokBuildUsageSource.Credential) async throws -> GrokBuildUsageSource.Credential {
+        try Task.checkCancellation()
+        let waiterID = UUID()
+        let result = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                if pending[url] == nil {
+                    let id = UUID()
+                    let task = Task {
+                        let result: Result<GrokBuildUsageSource.Credential, Error>
+                        do { result = .success(try await operation()) }
+                        catch { result = .failure(error) }
+                        finish(at: url, id: id, result: result)
+                    }
+                    pending[url] = Entry(id: id, task: task, waiters: [:])
+                }
+                pending[url]?.waiters[waiterID] = continuation
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(at: url, id: waiterID) }
+        }
+        try Task.checkCancellation()
+        return result
+    }
+
+    private func cancelWaiter(at url: URL, id: UUID) {
+        guard let waiter = pending[url]?.waiters.removeValue(forKey: id) else { return }
+        waiter.resume(throwing: CancellationError())
+        if pending[url]?.waiters.isEmpty == true { pending[url]?.task.cancel() }
+        // Keep the entry until the worker finishes, including subprocess cleanup.
+    }
+
+    private func finish(at url: URL, id: UUID, result: Result<GrokBuildUsageSource.Credential, Error>) {
+        guard let entry = pending[url], entry.id == id else { return }
+        pending[url] = nil
+        for waiter in entry.waiters.values { waiter.resume(with: result) }
     }
 }

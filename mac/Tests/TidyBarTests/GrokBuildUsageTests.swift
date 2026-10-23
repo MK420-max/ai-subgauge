@@ -93,6 +93,7 @@ extension TidyBarTests.GrokBuildUsageTests {
         try bytes.write(to: authURL)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: authURL.path)
         var renewed = expired
+        renewed["key"] = "synthetic-renewed-bearer"
         renewed["expires_at"] = ISO8601DateFormatter().string(from: Date().addingTimeInterval(3600))
         if changedAccount { renewed["user_id"] = "another-synthetic-user" }
         try data(scoped(renewed)).write(to: URL(fileURLWithPath: authURL.path + ".next"))
@@ -230,7 +231,8 @@ extension TidyBarTests.GrokBuildUsageTests {
         do { _ = try await task.value; Issue.record("应取消续期") }
         catch { #expect(error is CancellationError) }
         #expect(cancelledPID > 0)
-        #expect(kill(cancelledPID, 0) != 0)
+        // The cancelled caller returns promptly; worker cleanup completes independently.
+        try await ProcessTreeFixture.expectExited([cancelledPID])
     }
 
     @Test
@@ -260,5 +262,176 @@ extension TidyBarTests.GrokBuildUsageTests {
             Issue.record("缺少续期元数据应要求重新连接")
         } catch { #expect(error.localizedDescription.contains("重新连接")) }
         #expect(!(launched))
+    }
+}
+
+extension TidyBarTests.GrokBuildUsageTests {
+    @Test(arguments: [16.0, 15.0, 0.0, -1.0])
+    func renewalStartsAtFifteenSecondsBeforeExpiry(seconds: TimeInterval) async throws {
+        var value = auth(expires: now.addingTimeInterval(seconds))
+        value["refresh_token"] = "synthetic-refresh-boundary"
+        let initial = try #require(try GrokBuildUsageSource.credential(from: data(scoped(value)), now: now, allowExpired: true))
+        let fresh = try #require(try GrokBuildUsageSource.credential(from: data(scoped(auth())), now: now))
+        var renewals = 0, lookups = 0
+        _ = try await GrokBuildUsageSource.credentialForBilling(initial,
+            authURL: URL(fileURLWithPath: "/unused-synthetic-credential"), now: now,
+            cli: { lookups += 1; return URL(fileURLWithPath: "/unused-synthetic-cli") },
+            renew: { _, _, _ in renewals += 1; return fresh })
+        #expect(renewals == (seconds <= 15 ? 1 : 0))
+        #expect(lookups == renewals)
+    }
+
+    @Test func concurrentRenewalsLaunchOncePersistAndLogOnlySafeEvents() async throws {
+        let (cli, file, expired) = try renewalFixture(script: renewalScript)
+        let launches = RenewalObservations()
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0..<8 {
+                group.addTask {
+                    _ = try await GrokBuildUsageSource.refreshCredential(executable: cli, authURL: file, expected: expired,
+                        onLaunch: { _ in launches.launched() }, verifyCLI: { _ in }, log: { launches.log($0) })
+                }
+            }
+            try await group.waitForAll()
+        }
+        // Reusing an expired snapshot must reuse the valid on-disk renewal.
+        _ = try await GrokBuildUsageSource.refreshCredential(executable: cli, authURL: file, expected: expired,
+            onLaunch: { _ in launches.launched() }, verifyCLI: { _ in }, log: { launches.log($0) })
+        #expect(launches.count == 1)
+        let saved = try #require(try GrokBuildUsageSource.readCredential(at: file))
+        _ = try await GrokBuildUsageSource.fetchBilling(saved) { request in
+            let usesRenewedToken = request.value(forHTTPHeaderField: "Authorization") == "Bearer synthetic-renewed-bearer"
+            #expect(usesRenewedToken)
+            return (try self.data(["config": ["creditUsagePercent": 25]]),
+                try #require(HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)))
+        }
+        #expect((try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        #expect(launches.messages.count == 1)
+        #expect(launches.messages.first?.hasPrefix("grok token refreshed, expires in ") == true)
+        #expect(launches.messages.allSatisfy { !$0.contains("synthetic-") && !$0.contains("Bearer") && !$0.contains("test-client") })
+    }
+
+    @MainActor @Test func renewalFailureShowsUnavailableQuotaAndNeverLogsReturnedSecrets() async throws {
+        let script = """
+        IFS= read -r first
+        printf '%s\\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+        IFS= read -r second
+        printf '%s\\n' 'synthetic-stderr-secret' >&2
+        printf '%s\\n' '{"jsonrpc":"2.0","id":2,"error":{"message":"synthetic-error-secret","token":"synthetic-ignored"}}'
+        """
+        let (cli, file, expired) = try renewalFixture(script: script)
+        let events = RenewalObservations()
+        let store = AIUsageStore(applyDisplayFilters: false, fetcher: { _ in
+            _ = try await GrokBuildUsageSource.refreshCredential(executable: cli, authURL: file, expected: expired,
+                verifyCLI: { _ in }, log: { events.log($0) })
+            throw AIUsageError.invalidResponse
+        })
+        store.snapshots = [AIUsageSnapshot(provider: .grok, windows: [
+            .init(id: "weekly", title: "fixture", remainingPercent: 50)
+        ], isConnected: true, status: "", source: "fixture", updatedAt: Date())]
+        store.refresh(provider: .grok)
+        for _ in 0..<400 where store.isRefreshing { try await Task.sleep(nanoseconds: 10_000_000) }
+        #expect(!store.isRefreshing)
+        let snapshot = try #require(store.visibleSnapshots.first)
+        #expect(!snapshot.isConnected)
+        #expect(snapshot.error == L10n.text("error.grok.automatic.renewal.failed.reconnect.the.account"))
+        #expect(snapshot.windows.first?.remainingPercent == nil)
+        #expect(events.messages == ["grok token refresh failed; reconnect or retry"])
+        #expect(events.messages.allSatisfy { !$0.contains("synthetic-") && !$0.contains("Bearer") })
+        store.stop()
+    }
+}
+
+private final class RenewalObservations: @unchecked Sendable {
+    private let lock = NSLock()
+    private var launchCount = 0
+    private var recorded: [String] = []
+    func launched() { lock.withLock { launchCount += 1 } }
+    func log(_ event: GrokBuildUsageSource.RenewalEvent) { lock.withLock { recorded.append(event.message) } }
+    var count: Int { lock.withLock { launchCount } }
+    var messages: [String] { lock.withLock { recorded } }
+}
+
+extension TidyBarTests.GrokBuildUsageTests {
+    private func waitForWaiters(_ count: Int, at url: URL, in renewals: GrokCredentialRenewals) async throws {
+        for _ in 0..<1000 {
+            if await renewals.pending[url]?.waiters.count == count { return }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        Issue.record("Shared renewal did not register the expected waiters")
+        throw AIUsageError.timeout
+    }
+
+    @Test func cancellingOneWaiterLeavesSharedRenewalRunningAndDoesNotStartDuplicates() async throws {
+        let renewals = GrokCredentialRenewals(), release = TestSignal()
+        let calls = RenewalObservations()
+        let url = URL(fileURLWithPath: "/tmp/synthetic-renewal-" + UUID().uuidString)
+        let credential = try #require(try GrokBuildUsageSource.credential(from: data(scoped(auth())), now: now))
+        let operation: () async throws -> GrokBuildUsageSource.Credential = {
+            calls.launched()
+            _ = await release.wait(timeout: 5)
+            try Task.checkCancellation()
+            return credential
+        }
+        let first = Task { try await renewals.refresh(at: url, operation: operation) }
+        let second = Task { try await renewals.refresh(at: url, operation: operation) }
+        defer { release.signal(); first.cancel(); second.cancel() }
+        try await waitForWaiters(2, at: url, in: renewals)
+        first.cancel()
+        do { _ = try await first.value; Issue.record("Cancelled waiter must throw") }
+        catch is CancellationError {}
+        // A caller joining after the cancelled waiter has returned must still reuse the worker.
+        let third = Task { try await renewals.refresh(at: url, operation: operation) }
+        defer { third.cancel() }
+        try await waitForWaiters(2, at: url, in: renewals)
+        #expect(calls.count == 1)
+        release.signal()
+        for task in [second, third] {
+            let result = try await task.value
+            let snapshot = try await GrokBuildUsageSource.fetchBilling(result) { request in
+                let matches = request.value(forHTTPHeaderField: "Authorization") == "Bearer synthetic-test-bearer"
+                #expect(matches)
+                return (try self.data(["config": ["creditUsagePercent": 25]]),
+                        HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+            #expect(snapshot.windows.first?.remainingPercent == 75)
+        }
+        #expect(calls.count == 1)
+        #expect(await renewals.pending[url] == nil)
+    }
+
+    @Test func cancellingAllWaitersCancelsWorkerButKeepsEntryUntilCleanupFinishes() async throws {
+        let renewals = GrokCredentialRenewals(), cancelled = TestSignal(), cleanup = TestSignal()
+        let calls = RenewalObservations()
+        let url = URL(fileURLWithPath: "/tmp/synthetic-renewal-" + UUID().uuidString)
+        let operation: () async throws -> GrokBuildUsageSource.Credential = {
+            calls.launched()
+            do { try await Task.sleep(nanoseconds: 10_000_000_000) }
+            catch {
+                cancelled.signal()
+                _ = await Task.detached { await cleanup.wait(timeout: 5) }.value
+                throw error
+            }
+            throw AIUsageError.invalidResponse
+        }
+        let first = Task { try await renewals.refresh(at: url, operation: operation) }
+        let second = Task { try await renewals.refresh(at: url, operation: operation) }
+        defer { cleanup.signal(); first.cancel(); second.cancel() }
+        try await waitForWaiters(2, at: url, in: renewals)
+        first.cancel(); second.cancel()
+        for task in [first, second] {
+            do { _ = try await task.value; Issue.record("Cancelled waiter must throw") }
+            catch is CancellationError {}
+        }
+        #expect(await cancelled.wait(timeout: 1))
+        #expect(await renewals.pending[url] != nil)
+        let third = Task { try await renewals.refresh(at: url, operation: operation) }
+        defer { third.cancel() }
+        try await waitForWaiters(1, at: url, in: renewals)
+        #expect(calls.count == 1)
+        cleanup.signal()
+        do { _ = try await third.value; Issue.record("Joining a cancelling worker must observe its failure") }
+        catch is CancellationError {}
+        #expect(await renewals.pending[url] == nil)
+        #expect(calls.count == 1)
     }
 }

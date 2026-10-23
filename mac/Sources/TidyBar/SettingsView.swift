@@ -2,122 +2,69 @@ import AppKit
 import ServiceManagement
 import SwiftUI
 
-private enum SettingsSection: String, CaseIterable, Identifiable {
-    case layout, bar, appearance, presets, automation, widgets, usage, hotkeys, general
-    var title: String {
-        switch self {
-        case .layout: return L10n.text("settings.menu.bar.layout")
-        case .bar: return L10n.text("settings.collection.bar")
-        case .appearance: return L10n.text("settings.appearance")
-        case .presets: return L10n.text("settings.presets")
-        case .automation: return L10n.text("settings.automation")
-        case .widgets: return L10n.text("settings.widgets")
-        case .usage: return L10n.text("settings.ai.usage")
-        case .hotkeys: return L10n.text("settings.shortcuts")
-        case .general: return L10n.text("settings.general")
-        }
-    }
-    var id: String { rawValue }
-    var icon: String {
-        switch self {
-        case .layout: return "menubar.rectangle"
-        case .bar: return "tray.full"
-        case .appearance: return "paintpalette"
-        case .presets: return "square.stack.3d.up"
-        case .automation: return "bolt"
-        case .widgets: return "square.grid.2x2"
-        case .usage: return "chart.bar.fill"
-        case .hotkeys: return "keyboard"
-        case .general: return "gearshape"
-        }
-    }
-    var caption: String {
-        switch self {
-        case .layout: return L10n.text("settings.keep.frequently.used.icons.visible.and.collect")
-        case .bar: return L10n.text("settings.choose.how.to.expand.and.when.to")
-        case .appearance: return L10n.text("settings.set.a.menu.bar.background.and.corners")
-        case .presets: return L10n.text("settings.save.layouts.and.appearance.for.different.work")
-        case .automation: return L10n.text("settings.switch.presets.automatically.by.app.time.or")
-        case .widgets: return L10n.text("settings.add.a.clock.calendar.music.or.weather")
-        case .usage: return L10n.text("settings.view.ai.account.quota.reset.times.and")
-        case .hotkeys: return L10n.text("settings.expand.and.find.menu.bar.icons.using")
-        case .general: return L10n.text("settings.manage.startup.and.settings.files")
-        }
-    }
-}
-
 struct SettingsView: View {
     @ObservedObject var store: SettingsStore
     @ObservedObject var engine: MenuEngine
-    @State private var section: SettingsSection? = .layout
+    @ObservedObject var navigation: SettingsNavigation
+    var section: SettingsSection {
+        get { navigation.section }
+        nonmutating set { navigation.section = newValue }
+    }
+    var usageStore: AIUsageStore = .shared
+    var approximateGlass = false
+    @State private var addingSubscription = false
     @AppStorage("Language") private var language = "system"
     @AppStorage(AppTheme.preferenceKey) private var themePreference = "system"
     @Environment(\.appTheme) private var themeMode
     private var theme: ThemePalette { ThemeCatalog.shared.palette(themeMode) }
     @State private var search = ""
-    @State private var presetName = ""
     @State private var targetedZone: ItemZone?
     @State private var targetedEntryID: String?
-    @State private var loginStatus = SMAppService.mainApp.status
+    @State private var presetName = ""
+    @State private var loginStatus = LoginItemService.main.status()
     @Environment(\.scenePhase) private var scenePhase
 
-    var body: some View {
-        NavigationSplitView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(spacing: 9) {
-                    Image(nsImage: AppBrand.logo(themeMode))
-                        .resizable().interpolation(.high).frame(width: 34, height: 34)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(L10n.text("app.name")).font(.headline)
-                        Text(L10n.text("settings.make.room.in.your.menu.bar")).font(.caption).foregroundStyle(theme.color(\.textSecondary))
-                    }
-                }.padding(.horizontal, 16).padding(.top, 20)
-                List(SettingsSection.allCases, selection: $section) { item in
-                    Label(item.title, systemImage: item.icon).tag(item)
-                        .padding(.vertical, 4)
-                }.listStyle(.sidebar)
-                HStack(spacing: 6) {
-                    Circle().fill(engine.available ? ThemeCatalog.shared.quotaColor(100) : theme.color(\.demo)).frame(width: 7, height: 7)
-                    Text(engine.available ? L10n.text("settings.collection.service.ready") : L10n.text("settings.permission.setup.needed"))
-                        .font(.caption).foregroundStyle(theme.color(\.textSecondary))
-                }.padding(.horizontal, 16).padding(.bottom, 18)
-            }
-            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 250)
-        } detail: {
-            VStack(alignment: .leading, spacing: 0) {
-                pageHeader
-                Divider()
-                if let error = store.error { message(error, symbol: "exclamationmark.triangle.fill", color: theme.color(\.error)) }
-                if section != .usage, let error = engine.lastError { message(error, symbol: "exclamationmark.triangle.fill", color: theme.color(\.error)) }
-                selectedContent
-            }
-            .padding(.top, 28)
-            .background(theme.color(\.background).opacity(0.75))
-        }
-        .frame(minWidth: 900, minHeight: 620)
-        .scrollContentBackground(.hidden)
-        .onAppear { refreshLoginStatus() }
-        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("tidyBarShowAIUsage"))) { _ in section = .usage }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { refreshLoginStatus() } }
+    init(store: SettingsStore, engine: MenuEngine? = nil, section: SettingsSection = .subscriptions,
+         usageStore: AIUsageStore? = nil, approximateGlass: Bool = false, navigation: SettingsNavigation? = nil) {
+        self.store = store
+        self.engine = engine ?? MenuEngine(store: store)
+        self.navigation = navigation ?? SettingsNavigation(section: section)
+        self.usageStore = usageStore ?? .shared
+        self.approximateGlass = approximateGlass
     }
 
-    private var pageHeader: some View {
-        let current = section ?? .layout
-        return VStack(alignment: .leading, spacing: 7) {
-            Text(current.title).font(.system(size: 26, weight: .bold))
-            Text(current.caption).font(.callout).foregroundStyle(theme.color(\.textSecondary))
-        }.padding(26)
+    var body: some View {
+        SettingsChrome(section: $navigation.section, approximateGlass: approximateGlass) {
+            VStack(alignment: .leading, spacing: 0) {
+                if let error = store.error { message(error, symbol: "exclamationmark.triangle.fill", color: theme.color(\.error)) }
+                if section == .layout || section == .bar, let error = engine.lastError {
+                    message(error, symbol: "exclamationmark.triangle.fill", color: theme.color(\.error))
+                }
+                selectedContent
+                    .modifier(SettingsControlStyle(approximate: approximateGlass))
+            }
+        }
+        .overlay {
+            if addingSubscription {
+                Color.black.opacity(0.12).clipShape(RoundedRectangle(cornerRadius: 26)).allowsHitTesting(false)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .onAppear { if !approximateGlass { refreshLoginStatus() } }
+        .onChange(of: scenePhase) { _, phase in if phase == .active && !approximateGlass { refreshLoginStatus() } }
     }
 
     @ViewBuilder private var selectedContent: some View {
-        switch section ?? .layout {
+        switch section {
+        case .subscriptions: SettingsSubscriptionsView(store: usageStore, adding: $addingSubscription, approximateGlass: approximateGlass)
         case .layout: layoutPage
         case .bar: barPage
+        case .panel: ScrollView { SettingsDisplayPreferences(approximateGlass: approximateGlass) }
+        case .addons: SettingsAddonsView { section = $0 }
         case .appearance: AppearanceSettingsView(store: store)
         case .presets: presetsPage
         case .automation: AutomationSettingsView(store: store)
         case .widgets: WidgetSettingsView(store: store)
-        case .usage: AIUsageView(store: AIUsageStore.shared)
         case .hotkeys: HotkeySettingsView(store: store)
         case .general: generalPage
         }
@@ -142,57 +89,40 @@ struct SettingsView: View {
     }
 
     private var layoutPage: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                TextField(L10n.text("settings.search.apps.icons.or.groups"), text: $search)
-                    .textFieldStyle(.roundedBorder)
-                Button { engine.refresh() } label: { Label(L10n.text("settings.refresh"), systemImage: "arrow.clockwise") }
-                    .disabled(engine.isBusy)
-                Button(engine.isExpanded ? L10n.text("settings.collapse") : L10n.text("settings.expand")) { engine.toggle() }
-                Button(L10n.text("settings.show.all")) { engine.showAll() }
-            }
-            HStack {
-                Label(L10n.text("settings.icon.order"), systemImage: "arrow.left.arrow.right")
-                    .font(.callout).foregroundStyle(theme.color(\.textSecondary))
-                Spacer()
-                Button(L10n.text("settings.menu.bar.position.access")) { engine.openMenuBarAccess() }
-                    .disabled(engine.isBusy)
-                Button(L10n.text("settings.restore.latest.position.backup")) { engine.restoreLastLayoutBackup() }
-                    .disabled(engine.isBusy)
-            }
-            if !engine.menuBarAccessGranted {
-                Text(L10n.text("settings.before.reordering.icons.click.menu.bar.position"))
-                    .font(.caption).foregroundStyle(theme.color(\.demo))
-            }
-            if !engine.accessibilityGranted || !engine.available {
-                VStack(alignment: .leading, spacing: 9) {
-                    Label(L10n.text("settings.permissions.and.system.support"), systemImage: "hand.raised.fill").font(.headline)
-                    Text(L10n.text("settings.identifying.and.clicking.icons.requires.accessibility.access"))
-                        .font(.callout).foregroundStyle(theme.color(\.textSecondary))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                SettingsGroup {
+                    TextField(L10n.text("settings.search.apps.icons.or.groups"), text: $search).textFieldStyle(.roundedBorder)
                     HStack {
-                        Button(L10n.text("settings.allow.accessibility.access")) { engine.requestAccessibility() }
-                    }
-                }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(theme.color(\.demo).opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-            }
-            if !engine.status.isEmpty {
-                Text(engine.status).font(.caption).foregroundStyle(theme.color(\.textSecondary)).textSelection(.enabled)
-            }
-            Text(L10n.text("settings.multiple.icons.from.one.app.are.collected"))
-                .font(.caption).foregroundStyle(theme.color(\.textSecondary))
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    ForEach(ItemZone.allCases) { zone in
-                        zoneSection(zone)
+                        Button { engine.refresh() } label: { Label(L10n.text("settings.refresh"), systemImage: "arrow.clockwise") }.disabled(engine.isBusy)
+                        Spacer(minLength: 0)
+                        Button(engine.isExpanded ? L10n.text("settings.collapse") : L10n.text("settings.expand")) { engine.toggle() }
+                        Button(L10n.text("settings.show.all")) { engine.showAll() }
                     }
                 }
-            }
-        }.padding(22)
+                SettingsGroup(title: L10n.text("settings.icon.order")) {
+                    Button(L10n.text("settings.menu.bar.position.access")) { engine.openMenuBarAccess() }.disabled(engine.isBusy)
+                    Button(L10n.text("settings.restore.latest.position.backup")) { engine.restoreLastLayoutBackup() }.disabled(engine.isBusy)
+                    if !engine.menuBarAccessGranted {
+                        Text(L10n.text("settings.before.reordering.icons.click.menu.bar.position")).foregroundStyle(.secondary)
+                    }
+                }
+                if !engine.accessibilityGranted || !engine.available {
+                    SettingsGroup(title: L10n.text("settings.permissions.and.system.support")) {
+                        Text(L10n.text("settings.identifying.and.clicking.icons.requires.accessibility.access")).foregroundStyle(.secondary)
+                        Button(L10n.text("settings.allow.accessibility.access")) { engine.requestAccessibility() }
+                    }
+                }
+                if !engine.status.isEmpty { Text(engine.status).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+                Text(L10n.text("settings.multiple.icons.from.one.app.are.collected")).font(.caption).foregroundStyle(.secondary)
+                ForEach(ItemZone.allCases) { zoneSection($0) }
+            }.padding(.bottom, 2)
+        }
     }
 
     private func zoneSection(_ zone: ItemZone) -> some View {
         let entries = filteredItems.filter { (store.config.rules[$0.bundleID]?.zone ?? .visible) == zone }
-        return VStack(alignment: .leading, spacing: 9) {
+        return SettingsGroup {
             HStack {
                 Image(systemName: zone == .visible ? "eye" : zone == .hidden ? "tray" : "eye.slash")
                 Text(zone.title).font(.headline)
@@ -212,7 +142,7 @@ struct SettingsView: View {
                         itemRow(entry)
                         if entry.id != entries.last?.id { Divider().padding(.leading, 74) }
                     }
-                }.background(theme.color(\.surface), in: RoundedRectangle(cornerRadius: 10))
+                }
             }
         }
         .contentShape(Rectangle())
@@ -230,68 +160,50 @@ struct SettingsView: View {
     }
 
     private func itemRow(_ entry: MenuEntry) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "line.3.horizontal")
-                .font(.caption).foregroundStyle(theme.color(\.textSecondary))
-                .frame(width: 14, height: 28)
-                .contentShape(Rectangle())
-                .draggable(entry.id) {
-                    Label(entry.name, systemImage: "line.3.horizontal")
-                        .padding(8)
-                }
-                .help(L10n.text("settings.drag.to.a.zone.to.change.visibility"))
-                .accessibilityIdentifier("menu-item.drag.\(entry.id)")
-                .accessibilityLabel(L10n.text("settings.drag.handle.for.0", entry.name))
-                .accessibilityHint(L10n.text("settings.drag.to.a.zone.to.change.collection"))
-            Group {
-                if let icon = entry.icon { Image(nsImage: icon).resizable().scaledToFit() }
-                else { Image(systemName: "app.dashed").resizable().scaledToFit().foregroundStyle(theme.color(\.textSecondary)) }
-            }.frame(width: 25, height: 25).padding(.top, 3)
-            VStack(alignment: .leading, spacing: 7) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.name).font(.system(size: 13, weight: .semibold))
-                        if isSystemFixed(entry.bundleID) {
-                            Text(entry.bundleID == "com.mike.aisubgauge" ? L10n.text("settings.collection.entry.stays.visible") : L10n.text("settings.system.item.stays.visible")).font(.caption).foregroundStyle(theme.color(\.textSecondary))
-                        }
-                        if !entry.title.isEmpty && entry.title != entry.name {
-                            Text(entry.title).font(.caption).foregroundStyle(theme.color(\.textSecondary)).lineLimit(1)
-                        }
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                Image(systemName: "line.3.horizontal").foregroundStyle(.secondary)
+                    .contentShape(Rectangle()).draggable(entry.id) { Text(entry.name).padding(8) }
+                    .accessibilityIdentifier("menu-item.drag.\(entry.id)")
+                    .accessibilityLabel(L10n.text("settings.drag.handle.for.0", entry.name))
+                Group {
+                    if let icon = entry.icon { Image(nsImage: icon).resizable().scaledToFit() }
+                    else { Image(systemName: "app.dashed").resizable().scaledToFit() }
+                }.frame(width: 24, height: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    if isSystemFixed(entry.bundleID) {
+                        Text(entry.bundleID == "com.mike.aisubgauge" ? L10n.text("settings.collection.entry.stays.visible") : L10n.text("settings.system.item.stays.visible"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else if !entry.title.isEmpty && entry.title != entry.name {
+                        Text(entry.title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    Spacer(minLength: 8)
-                    Picker(L10n.text("settings.visibility"), selection: Binding(
-                        get: { store.config.rules[entry.bundleID]?.zone ?? .visible },
-                        set: { engine.setZone($0, for: entry.bundleID) }
-                    )) {
-                        ForEach(ItemZone.allCases) { Text($0.title).tag($0) }
-                    }.labelsHidden().frame(width: 118).disabled(isSystemFixed(entry.bundleID))
-                        .accessibilityIdentifier("menu-item.zone.\(entry.id)")
-                        .accessibilityLabel(L10n.text("settings.visibility.of.0", entry.name))
-                    Button { engine.moveInList(entry, offset: -1) } label: { Image(systemName: "arrow.left") }
-                        .help(L10n.text("settings.move.left")).disabled(!entry.canMove || engine.isBusy)
-                        .accessibilityIdentifier("menu-item.move-left.\(entry.id)")
-                        .accessibilityLabel(L10n.text("settings.move.0.left", entry.name))
-                    Button { engine.moveInList(entry, offset: 1) } label: { Image(systemName: "arrow.right") }
-                        .help(L10n.text("settings.move.right")).disabled(!entry.canMove || engine.isBusy)
-                        .accessibilityIdentifier("menu-item.move-right.\(entry.id)")
-                        .accessibilityLabel(L10n.text("settings.move.0.right", entry.name))
-                    Button(L10n.text("settings.open")) { engine.activate(entry) }.disabled(!entry.isRunning)
-                        .accessibilityIdentifier("menu-item.open.\(entry.id)")
-                        .accessibilityLabel(L10n.text("settings.open.0", entry.name))
                 }
-                HStack(spacing: 14) {
-                    TextField(L10n.text("settings.group.name.optional"), text: itemBinding(entry.bundleID, \.group, default: ""))
-                        .textFieldStyle(.roundedBorder).frame(maxWidth: 170)
-                        .accessibilityIdentifier("menu-item.group.\(entry.id)")
-                        .accessibilityLabel(L10n.text("settings.group.for.0", entry.name))
-                    Toggle(L10n.text("settings.show.when.app.is.active"), isOn: itemBinding(entry.bundleID, \.showWhenActive, default: false))
-                        .font(.caption)
-                        .accessibilityIdentifier("menu-item.active.\(entry.id)")
-                        .accessibilityLabel(L10n.text("settings.show.when.0.is.active", entry.name))
-                }
+                Spacer(minLength: 0)
             }
-        }
-        .padding(12)
+            HStack(spacing: 6) {
+                Picker(L10n.text("settings.visibility"), selection: Binding(
+                    get: { store.config.rules[entry.bundleID]?.zone ?? .visible },
+                    set: { engine.setZone($0, for: entry.bundleID) }
+                )) { ForEach(ItemZone.allCases) { Text($0.title).tag($0) } }
+                    .labelsHidden().frame(maxWidth: 160).disabled(isSystemFixed(entry.bundleID))
+                    .accessibilityIdentifier("menu-item.zone.\(entry.id)")
+                    .accessibilityLabel(L10n.text("settings.visibility.of.0", entry.name))
+                Spacer(minLength: 0)
+                Button { engine.moveInList(entry, offset: -1) } label: { Image(systemName: "arrow.left") }
+                    .disabled(!entry.canMove || engine.isBusy).accessibilityIdentifier("menu-item.move-left.\(entry.id)")
+                    .accessibilityLabel(L10n.text("settings.move.0.left", entry.name))
+                Button { engine.moveInList(entry, offset: 1) } label: { Image(systemName: "arrow.right") }
+                    .disabled(!entry.canMove || engine.isBusy).accessibilityIdentifier("menu-item.move-right.\(entry.id)")
+                    .accessibilityLabel(L10n.text("settings.move.0.right", entry.name))
+                Button(L10n.text("settings.open")) { engine.activate(entry) }.disabled(!entry.isRunning)
+                    .accessibilityIdentifier("menu-item.open.\(entry.id)")
+            }.controlSize(.small)
+            TextField(L10n.text("settings.group.name.optional"), text: itemBinding(entry.bundleID, \.group, default: ""))
+                .textFieldStyle(.roundedBorder).accessibilityIdentifier("menu-item.group.\(entry.id)")
+            Toggle(L10n.text("settings.show.when.app.is.active"), isOn: itemBinding(entry.bundleID, \.showWhenActive, default: false))
+                .font(.caption).accessibilityIdentifier("menu-item.active.\(entry.id)")
+        }.padding(.vertical, 10)
         .contentShape(Rectangle())
         .background(targetedEntryID == entry.id ? Color.accentColor.opacity(0.08) : .clear)
         .overlay {
@@ -351,17 +263,26 @@ struct SettingsView: View {
     }
 
     private var barPage: some View {
-        Form {
-            Section(L10n.text("settings.expansion")) {
-                Toggle(L10n.text("settings.use.a.separate.collection.bar"), isOn: $store.config.useFloatingBar)
-                Text(L10n.text("settings.when.enabled.collected.icons.appear.below.the"))
-                    .font(.caption).foregroundStyle(theme.color(\.textSecondary))
+        ScrollView {
+          VStack(alignment: .leading, spacing: 12) {
+            if !engine.accessibilityGranted {
+                SettingsGroup {
+                    Text(CollectionAccess.message).fixedSize(horizontal: false, vertical: true)
+                    Button(L10n.text("settings.allow.accessibility.access")) { engine.requestAccessibility() }
+                }
+            }
+            SettingsGroup(title: L10n.text("settings.expansion")) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle(L10n.text("settings.use.a.separate.collection.bar"), isOn: $store.config.useFloatingBar)
+                    Text(L10n.text("settings.when.enabled.collected.icons.appear.below.the"))
+                        .font(.caption).foregroundStyle(theme.color(\.textSecondary))
+                }
                 Toggle(L10n.text("settings.show.icon.names"), isOn: $store.config.showLabels)
                 Toggle(L10n.text("settings.expand.on.hover"), isOn: $store.config.revealOnHover)
                 Toggle(L10n.text("settings.expand.when.scrolling.in.the.menu.bar"), isOn: $store.config.revealOnScroll)
                 Toggle(L10n.text("settings.expand.when.clicking.an.empty.menu.bar"), isOn: $store.config.revealOnEmptyClick)
             }
-            Section(L10n.text("settings.auto.collapse")) {
+            SettingsGroup(title: L10n.text("settings.auto.collapse")) {
                 HStack {
                     Text(L10n.text("settings.delay"))
                     Spacer()
@@ -372,7 +293,7 @@ struct SettingsView: View {
                 Text(L10n.text("settings.set.to.0.to.keep.expanded.collapse"))
                     .font(.caption).foregroundStyle(theme.color(\.textSecondary))
             }
-            Section(L10n.text("settings.spacers")) {
+            SettingsGroup(title: L10n.text("settings.spacers")) {
                 ForEach(store.config.spacerWidths.indices, id: \.self) { index in
                     HStack {
                         Text(L10n.text("settings.spacer.0", index + 1))
@@ -386,27 +307,30 @@ struct SettingsView: View {
                 Text(L10n.text("settings.spacers.appear.as.separate.menu.bar.placeholders"))
                     .font(.caption).foregroundStyle(theme.color(\.textSecondary))
             }
-        }.formStyle(.grouped)
+          }.padding(.bottom, 2)
+        }
     }
 
     private var presetsPage: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
+        SettingsPage {
+            SettingsGroup {
                 TextField(L10n.text("settings.preset.name.e.g.focused.work"), text: $presetName).textFieldStyle(.roundedBorder)
                 Button(L10n.text("settings.save.current.layout")) {
                     let previous = store.config.presets.count
                     store.savePreset(name: presetName, order: engine.captureCurrentOrder())
                     if store.config.presets.count > previous && store.error == nil { presetName = "" }
                 }.disabled(presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Text(L10n.text("settings.presets.save.icon.zones.order.groups.and"))
+                    .font(.caption).foregroundStyle(theme.color(\.textSecondary))
             }
-            Text(L10n.text("settings.presets.save.icon.zones.order.groups.and"))
-                .font(.callout).foregroundStyle(theme.color(\.textSecondary))
             if store.config.presets.isEmpty {
-                ContentUnavailableView(L10n.text("settings.no.presets.saved.yet"), systemImage: "square.stack.3d.up", description: Text(L10n.text("settings.organize.icons.in.menu.bar.layout.then")))
+                SettingsGroup {
+                    ContentUnavailableView(L10n.text("settings.no.presets.saved.yet"), systemImage: "square.stack.3d.up", description: Text(L10n.text("settings.organize.icons.in.menu.bar.layout.then")))
+                }
             } else {
-                List {
-                    ForEach(store.config.presets) { preset in
-                        HStack(spacing: 14) {
+                ForEach(store.config.presets) { preset in
+                    SettingsGroup {
+                        HStack(spacing: 10) {
                             Image(systemName: "square.stack.3d.up.fill").foregroundStyle(theme.color(\.accent))
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(preset.name).font(.headline)
@@ -414,19 +338,21 @@ struct SettingsView: View {
                                     .font(.caption).foregroundStyle(theme.color(\.textSecondary))
                             }
                             Spacer()
-                            Button(L10n.text("settings.apply")) { store.applyPreset(preset); engine.applyVisibility() }
+                        }
+                        HStack {
+                            Button(L10n.text("settings.apply")) { store.applyPreset(preset) }
                             Button(L10n.text("settings.delete"), role: .destructive) { store.deletePreset(preset.id) }
-                        }.padding(.vertical, 7)
+                        }
                     }
-                }.listStyle(.inset)
+                }
             }
-            Spacer(minLength: 0)
-        }.padding(24)
+        }
     }
 
     private var generalPage: some View {
-        Form {
-            Section(L10n.text("settings.language")) {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 12) {
+            SettingsGroup(title: L10n.text("settings.language")) {
                 Picker(L10n.text("settings.language"), selection: $language) {
                     Text(L10n.text("settings.language.system")).tag("system")
                     Text(L10n.text("settings.language.en")).tag("en")
@@ -434,14 +360,14 @@ struct SettingsView: View {
                 }
                 Text(L10n.text("settings.language.restart")).font(.caption).foregroundStyle(theme.color(\.textSecondary))
             }
-            Section(L10n.text("settings.theme")) {
+            SettingsGroup(title: L10n.text("settings.theme")) {
                 Picker(L10n.text("settings.theme"), selection: $themePreference) {
                     Text(L10n.text("settings.theme.system")).tag("system")
                     Text(L10n.text("settings.theme.light")).tag("light")
                     Text(L10n.text("settings.theme.dark")).tag("dark")
                 }
             }
-            Section(L10n.text("settings.startup")) {
+            SettingsGroup(title: L10n.text("settings.startup")) {
                 Toggle(L10n.text("settings.launch.at.login"), isOn: Binding(get: { loginStatus == .enabled }, set: setLoginEnabled))
                 if loginStatus == .requiresApproval {
                     Text(L10n.text("settings.the.login.item.needs.system.approval.allow"))
@@ -451,11 +377,11 @@ struct SettingsView: View {
                 Text(L10n.text("settings.the.app.keeps.running.in.the.menu"))
                     .font(.caption).foregroundStyle(theme.color(\.textSecondary))
             }
-            ProviderLoginConsentView()
-            Section(L10n.text("settings.diagnostics")) {
+            SettingsGroup { ProviderLoginConsentView() }
+            SettingsGroup(title: L10n.text("settings.diagnostics")) {
                 Button(L10n.text("menu.diagnostics")) { DiagnosticsPreview.shared.show(snapshots: AIUsageStore.shared.snapshots) }
             }
-            Section(L10n.text("settings.settings.file")) {
+            SettingsGroup(title: L10n.text("settings.settings.file")) {
                 HStack {
                     Button(L10n.text("settings.export.settings.653")) { store.exportSettings() }
                     Button(L10n.text("settings.import.settings.654")) { store.importSettings(); refreshLoginStatus() }
@@ -465,26 +391,26 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(theme.color(\.textSecondary))
                 Button(L10n.text("settings.save.settings.again")) { store.save() }
             }
-            Section(L10n.text("settings.about")) {
+            SettingsGroup(title: L10n.text("settings.about")) {
                 LabeledContent(L10n.text("settings.name"), value: L10n.text("app.name"))
                 LabeledContent(L10n.text("settings.english.name"), value: L10n.text("app.name"))
                 LabeledContent(L10n.text("settings.version"), value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? AppIdentifiers.version)
                 Text(L10n.text("settings.all.features.are.available.without.an.activation"))
                     .font(.caption).foregroundStyle(theme.color(\.textSecondary))
             }
-        }.formStyle(.grouped)
+          }.padding(.bottom, 2)
+        }
     }
 
     private func refreshLoginStatus() {
-        loginStatus = SMAppService.mainApp.status
+        loginStatus = LoginItemService.main.status()
         let actual = loginStatus == .enabled
         if store.config.launchAtLogin != actual { store.config.launchAtLogin = actual }
     }
 
     private func setLoginEnabled(_ enabled: Bool) {
         do {
-            if enabled { try SMAppService.mainApp.register() }
-            else { try SMAppService.mainApp.unregister() }
+            try LoginItemService.main.setEnabled(enabled)
             refreshLoginStatus()
         } catch {
             refreshLoginStatus()

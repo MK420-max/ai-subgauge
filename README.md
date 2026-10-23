@@ -9,12 +9,14 @@ See how much of your AI subscriptions is left, from the macOS menu bar or the Wi
 [![macOS](https://img.shields.io/badge/macOS-27%2B-000000?logo=apple&logoColor=white)](mac/README.en.md)
 [![Windows](https://img.shields.io/badge/Windows-tray-0078D6?logo=windows&logoColor=white)](windows/README.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](#installation)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](#installation)
 [![GitHub stars](https://img.shields.io/github/stars/MK420-max/ai-subgauge?style=social)](https://github.com/MK420-max/ai-subgauge/stargazers)
 
 **English** · [简体中文](README.zh-CN.md)
 
 </div>
+
+Mac 2.0 adds quota-arc menu bar icons, glass panels, a unified settings window, and menu bar collection. Windows keeps its existing tray interface.
 
 ## Screenshots
 
@@ -29,7 +31,7 @@ Rendered with each app's offline preview mode (demo data: Codex 72%, Grok 45%, C
 
 ![macOS menu bar legend](docs/images/mac-menubar-legend.png)
 
-macOS menu bar: each provider shows its icon followed by the remaining quota of its current window. `—` means there is no current value. `⚠︎` means the last refresh failed; open the menu to see why.
+macOS 2.0 menu bar: each subscription has a service icon and remaining-quota arc. Percentages are optional and can appear above the arc or beside the icon. Open the glass panel for quota details, reset times and refresh errors. The screenshots above show the earlier interface.
 
 ![Windows tray legend](docs/images/windows-tray-legend.png)
 

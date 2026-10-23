@@ -75,6 +75,7 @@ extension TidyBarTests {
         #expect(catalog.quotaColor(.nan) == .clear)
     }
 
+    #if DEBUG
     @MainActor @Test func previewThemeArgumentsAndCompactBilingualText() throws {
         #expect(try PreviewRenderer.theme(arguments: ["app"]) == nil)
         for mode in AppTheme.allCases {
@@ -101,4 +102,5 @@ extension TidyBarTests {
             #expect(PanelQuotaText.reset(PreviewRenderer.now, now: PreviewRenderer.now) == L10n.text("panel.resetDue"))
         }
     }
+    #endif
 }

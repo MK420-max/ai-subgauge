@@ -19,5 +19,6 @@ shared/logo-src/*.icns
 *.app/
 *.dmg
 *.zip
+*.tgz
 *.log
 shared/private-logos/

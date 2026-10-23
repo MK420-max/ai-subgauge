@@ -1,6 +1,6 @@
 import Darwin
 import Foundation
-import MenuBarShim
+import SystemMembership
 
 /// Open before checking metadata; never read a symlink, foreign-owned or shared credential.
 enum CredentialFiles {

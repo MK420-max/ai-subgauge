@@ -6,28 +6,46 @@ import SwiftUI
 final class AppActions {
     static let shared = AppActions()
     weak var engine: MenuEngine?
-    var onSettings: (() -> Void)?
+    var onSettings: ((SettingsSection) -> Void)?
     var onSearch: (() -> Void)?
     var onToggle: (() -> Void)?
-    func showSettings() { onSettings?() }
+    func showSettings(_ section: SettingsSection = .subscriptions) { onSettings?(section) }
     func showSearch() { onSearch?() }
-    func toggle() { onToggle?() }
+    var onCollectionSettings: (() -> Void)?
+    func showCollectionSettings() { onCollectionSettings?() }
+    func showLayoutSettings() {
+        showSettings(.layout)
+    }
+    func startCollection(_ engine: MenuEngine, observeSystem: Bool = true) {
+        self.engine = engine
+        engine.start(observeSystem: observeSystem)
+    }
+    func toggle() {
+        guard engine?.requireCollectionAccessibility() != false else { return }
+        onToggle?()
+    }
 }
 
 @main
 struct TidyBarMain {
     @MainActor static func main() {
+        let app = StatusItemApplication.shared
         do {
             try L10n.configure(arguments: CommandLine.arguments)
+            #if DEBUG
+            if CommandLine.arguments.contains("--ui-preview") || Bundle.main.bundleIdentifier == "com.mike.aisubgauge.ui-v2" {
+                UIPreviewApp.run()
+                return
+            }
             if let directory = try PreviewRenderer.directory(arguments: CommandLine.arguments) {
                 try PreviewRenderer.render(to: directory, theme: PreviewRenderer.theme(arguments: CommandLine.arguments))
                 return
             }
+            #endif
         } catch {
             fputs(L10n.text("menu.ai.subgauge.development.preview.failed"), stderr)
             exit(1)
         }
-        let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.accessory)
@@ -46,8 +64,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var automation: AutomationController!
     private var hotkeys: HotkeyController!
     private var statusItem: NSStatusItem!
-    private var settingsWindow: NSWindow?
-    private var searchPanel: SearchPanel?
+    private var settingsController: SettingsWindowController?
+    private var searchPanel: AIUsagePanel? {
+        let manager = PopupManager.shared
+        return manager.kind == .drawer || manager.kind == .search ? manager.panel : nil
+    }
     private var subscriptions = Set<AnyCancellable>()
     private var spacerItems: [NSStatusItem] = []
     private var groupItems: [NSStatusItem] = []
@@ -65,6 +86,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var presetBaseline: LayoutPreset?
     private var pendingPresetTarget: LayoutPreset?
 
+    init(settingsController: SettingsWindowController? = nil, engine: MenuEngine? = nil) {
+        self.settingsController = settingsController
+        self.engine = engine
+        self.store = engine?.store
+        super.init()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let duplicate = NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == Bundle.main.bundleIdentifier && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
         guard !duplicate else {
@@ -81,12 +109,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         automation = AutomationController(store: store)
         hotkeys = HotkeyController(store: store, engine: engine)
         AppActions.shared.engine = engine
-        AppActions.shared.onSettings = { [weak self] in self?.showSettings() }
+        AppActions.shared.onSettings = { [weak self] section in self?.showSettings(section) }
         AppActions.shared.onSearch = { [weak self] in self?.showSearch(all: true) }
         AppActions.shared.onToggle = { [weak self] in self?.toggle() }
+        AppActions.shared.onCollectionSettings = { [weak self] in self?.collectionSettingsAction() }
         lastOrder = store.config.order
         installMenu()
         installStatusItem()
+        PopupManager.shared.statusFrames = { [weak self] in
+            guard let self else { return [] }
+            return ([self.statusItem] + self.spacerItems + self.groupItems).compactMap { PopupManager.screenFrame($0?.button) }
+                + [self.usageMenuBar?.statusButtonFrame].compactMap { $0 }
+        }
         engine.ownStatusFrameProvider = { [weak self] in
             guard let button = self?.statusItem?.button, let window = button.window,
                   let top = NSScreen.screens.first?.frame.maxY else { return nil }
@@ -100,7 +134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let frame = self?.usageMenuBar?.statusWindowFrame { frames.append(frame) }
             return frames
         }
-        engine.start(); appearance.start(); widgets.start()
+        AppActions.shared.startCollection(engine)
+        appearance.start(); widgets.start()
         ClaudeWebConnection.shared.restoreExistingSession()
         AIUsageStore.shared.start()
         usageMenuBar = AIUsageMenuBarController(store: AIUsageStore.shared, onOpenUsage: { [weak self] in self?.usageAction() })
@@ -137,6 +172,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         stopping = true
+        PopupManager.shared.dismiss()
+        PopupManager.shared.statusFrames = { [] }
         timer?.invalidate()
         eventMonitors.forEach { NSEvent.removeMonitor($0) }
         observers.forEach { NotificationCenter.default.removeObserver($0) }
@@ -213,16 +250,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.image = NSImage(systemSymbolName: "tray.2", accessibilityDescription: L10n.text("app.name"))
         statusItem.button?.toolTip = L10n.text("menu.ai.subgauge.click.to.expand.right.click")
         statusItem.button?.setAccessibilityIdentifier("com.mike.aisubgauge.main")
-        statusItem.button?.target = self; statusItem.button?.action = #selector(statusClicked)
+        statusItem.button?.target = self; statusItem.button?.action = #selector(statusClicked(_:))
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
     }
 
-    @objc private func statusClicked() {
+    @objc func statusClicked(_ button: NSButton) {
+        let event = StatusItemApplication.actionEvent
+        guard PopupManager.shared.consume(event) else { return }
         lastInteraction = Date()
-        if NSApp.currentEvent?.type == .rightMouseUp {
+        if event?.type == .rightMouseUp {
+            PopupManager.shared.dismiss()
             let menu = contextMenu(); statusItem.menu = menu; statusItem.button?.performClick(nil); statusItem.menu = nil
-        } else if NSApp.currentEvent?.modifierFlags.contains(.option) == true { showSearch(all: true) }
-        else { toggle() }
+        } else if event?.modifierFlags.contains(.option) == true { showSearch(all: true, anchor: button) }
+        else { toggle(anchor: button) }
     }
 
     private func contextMenu() -> NSMenu {
@@ -242,7 +282,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.submenu = presets; menu.addItem(item)
         }
         menu.addItem(.separator())
-        add(menu, L10n.text("menu.settings"), #selector(settingsAction), key: ",")
+        add(menu, L10n.text("menu.settings"), #selector(collectionSettingsAction), key: ",")
         add(menu, L10n.text("menu.about.ai.subgauge"), #selector(about))
         add(menu, L10n.text("menu.quit.and.restore.all.icons"), #selector(quit), key: "q")
         return menu
@@ -255,10 +295,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) { menuDepth = max(0, menuDepth - 1); lastInteraction = Date() }
     @objc private func settingsAction() { showSettings() }
     @objc private func usageAction() {
-        showSettings()
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(name: Notification.Name("tidyBarShowAIUsage"), object: nil)
-        }
+        showSettings(.subscriptions)
+    }
+    @objc private func collectionSettingsAction() {
+        showSettings(.bar)
     }
     @objc private func searchAction() { showSearch(all: true) }
     @objc private func searchHiddenAction() { showSearch(all: false) }
@@ -272,46 +312,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func about() {
         let alert = NSAlert()
         alert.messageText = L10n.text("app.name")
-        alert.informativeText = L10n.text("menu.ai.subgauge.1.2.0.all.features")
+        alert.informativeText = L10n.text("menu.ai.subgauge.1.2.0.all.features", Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? AppIdentifiers.version)
         alert.addButton(withTitle: L10n.text("common.ok"))
         alert.runModal()
     }
 
-    private func showSettings() {
-        guard store != nil, engine != nil else { return }
-        if settingsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1060, height: 730), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-            window.title = L10n.text("app.name")
-            window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: SettingsView(store: store, engine: engine).appThemed().environment(\.locale, L10n.locale))
-            window.minSize = NSSize(width: 900, height: 620)
-            window.center(); settingsWindow = window
+    private func showSettings(_ section: SettingsSection = .subscriptions) {
+        if settingsController == nil {
+            guard let store, let engine else { return }
+            settingsController = SettingsWindowController(store: store, engine: engine)
         }
-        NSApp.activate(ignoringOtherApps: true); settingsWindow?.makeKeyAndOrderFront(nil)
-        engine.refresh()
+        settingsController?.show(section)
+        engine?.refresh()
     }
 
-    private func toggle() {
+    private func toggle(anchor: NSView? = nil) {
         lastInteraction = Date()
-        if store.config.useFloatingBar {
-            if searchPanel?.isVisible == true { searchPanel?.orderOut(nil) }
-            else { showSearch(all: false) }
-        } else { engine.toggle() }
+        guard engine.requireCollectionAccessibility() else { return }
+        if store.config.useFloatingBar { showSearch(all: false, anchor: anchor) }
+        else { PopupManager.shared.dismiss(); engine.toggle() }
     }
 
-    private func showSearch(all: Bool, group: String? = nil) {
+    private func showSearch(all: Bool, group: String? = nil, toggle: Bool = true, anchor: NSView? = nil) {
+        guard engine.requireCollectionAccessibility() else { return }
         engine.refresh()
-        if searchPanel == nil { searchPanel = SearchPanel() }
-        guard let panel = searchPanel else { return }
-        panel.contentView = NSHostingView(rootView: SearchContent(store: store, engine: engine, showAll: all, group: group, dismiss: { [weak panel] in panel?.orderOut(nil) }).environment(\.locale, L10n.locale))
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
-        if let screen {
-            let width = min(560, screen.visibleFrame.width - 24)
-            panel.setContentSize(NSSize(width: width, height: min(480, screen.visibleFrame.height - 60)))
-            panel.setFrameTopLeftPoint(NSPoint(x: min(screen.visibleFrame.maxX - width - 12, max(screen.visibleFrame.minX + 12, mouse.x - width / 2)), y: screen.visibleFrame.maxY - 10))
+        PopupManager.shared.present(all ? .search : .drawer, anchor: anchor ?? statusItem?.button, toggle: toggle) { panel in
+            let mode = AppTheme.resolve(preference: UserDefaults.standard.string(forKey: AppTheme.preferenceKey),
+                systemDark: NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+            panel.appearance = NSAppearance(named: mode == .dark ? .darkAqua : .aqua)
+            panel.contentView = StandaloneWindow.hostingView(SearchContent(store: store, engine: engine, showAll: all, group: group,
+                dismiss: { PopupManager.shared.dismiss() }).environment(\.appTheme, mode)
+                .environment(\.colorScheme, mode.colorScheme).environment(\.locale, L10n.locale))
+            let mouse = NSEvent.mouseLocation
+            if let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main {
+                let width = min(480, screen.visibleFrame.width - 24)
+                panel.setContentSize(NSSize(width: width, height: min(400, screen.visibleFrame.height - 60)))
+                panel.setFrameTopLeftPoint(NSPoint(x: min(screen.visibleFrame.maxX - width - 12,
+                    max(screen.visibleFrame.minX + 12, mouse.x - width / 2)), y: screen.visibleFrame.maxY - 10))
+            }
         }
-        NSApp.activate(ignoringOtherApps: true); panel.makeKeyAndOrderFront(nil)
         lastInteraction = Date()
     }
 
@@ -336,10 +375,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.button?.setAccessibilityIdentifier("com.mike.aisubgauge.group.\(name)")
             item.button?.title = name; item.button?.toolTip = L10n.text("menu.open.0.group", name)
             item.button?.target = self; item.button?.action = #selector(groupClicked(_:))
+            item.button?.sendAction(on: [.leftMouseUp])
             groupItems.append(item)
         }
     }
-    @objc private func groupClicked(_ sender: NSStatusBarButton) { showSearch(all: true, group: sender.title) }
+    @objc private func groupClicked(_ sender: NSStatusBarButton) {
+        guard PopupManager.shared.consume(StatusItemApplication.actionEvent) else { return }
+        showSearch(all: true, group: sender.title, anchor: sender)
+    }
 
     private func installEvents() {
         for (name, delta) in [(NSMenu.didBeginTrackingNotification, 1), (NSMenu.didEndTrackingNotification, -1)] {
@@ -358,18 +401,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func handleEvent(_ event: NSEvent) {
         if event.type != .scrollWheel { lastInteraction = Date() }
-        let point = NSEvent.mouseLocation
+        let point = PopupManager.screenPoint(event)
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }),
               point.y >= screen.frame.maxY - max(25, screen.safeAreaInsets.top), point.x > screen.frame.midX else { return }
         if event.type == .scrollWheel, store.config.revealOnScroll, abs(event.scrollingDeltaY) > 1 { if event.scrollingDeltaY > 0 {
-            if store.config.useFloatingBar { showSearch(all: false) } else if !engine.isExpanded { engine.toggle() }
-        } else { engine.collapse(); searchPanel?.orderOut(nil) } }
+            if store.config.useFloatingBar { showSearch(all: false, toggle: false) } else if !engine.isExpanded { engine.toggle() }
+        } else { engine.collapse(); closeCollectionPanel() } }
         if event.type == .leftMouseUp, store.config.revealOnEmptyClick {
             let primaryTop = NSScreen.screens.first?.frame.maxY ?? screen.frame.maxY
             let cg = CGPoint(x: point.x, y: primaryTop - point.y)
             let onItem = engine.items.contains { $0.frame.insetBy(dx: -3, dy: -3).contains(cg) }
-            if !onItem { toggle() }
+            PopupManager.shared.handleEmptyClick(event, at: point, onScannedItem: onItem) { self.toggle() }
         }
+    }
+
+    private func closeCollectionPanel() {
+        if searchPanel != nil { PopupManager.shared.dismiss() }
     }
 
     private func tick() {
@@ -382,13 +429,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if !wasHovering, Date().timeIntervalSince(hoverStarted!) > 0.55 {
                 wasHovering = true
                 if searchPanel?.isVisible != true {
-                    if store.config.useFloatingBar { showSearch(all: false) } else if !engine.isExpanded { engine.toggle() }
+                    if store.config.useFloatingBar { showSearch(all: false, toggle: false) } else if !engine.isExpanded { engine.toggle() }
                 }
             }
         } else { hoverStarted = nil; wasHovering = false }
         let delay = store.config.autoHideDelay
         if delay > 0, Date().timeIntervalSince(lastInteraction) > delay, !engine.isBusy, menuDepth == 0 {
-            searchPanel?.orderOut(nil)
+            closeCollectionPanel()
             if engine.isExpanded { engine.collapse() }
         }
     }
@@ -405,7 +452,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case "search": showSearch(all: true)
             case "toggle": toggle()
             case "show": engine?.showAll(); lastInteraction = Date()
-            case "hide": engine?.collapse(); searchPanel?.orderOut(nil)
+            case "hide": engine?.collapse(); closeCollectionPanel()
             case "settings": showSettings()
             case "usage": usageAction()
             case "diagnostics": writeDiagnostics()
@@ -422,101 +469,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         try JSONSerialization.data(withJSONObject: DiagnosticsRedactor.value(output), options: [.prettyPrinted, .sortedKeys])
     }
 
-}
-
-private final class SearchPanel: NSPanel {
-    init() {
-        super.init(contentRect: NSRect(x: 0, y: 0, width: 560, height: 480), styleMask: [.titled, .fullSizeContentView, .closable, .utilityWindow], backing: .buffered, defer: false)
-        title = L10n.text("app.name")
-        titleVisibility = .hidden
-        titlebarAppearsTransparent = true
-        isReleasedWhenClosed = false; hidesOnDeactivate = false
-        level = .popUpMenu
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        isMovableByWindowBackground = true
-    }
-    override var canBecomeKey: Bool { true }
-    override func cancelOperation(_ sender: Any?) { orderOut(nil) }
-}
-
-private struct SearchContent: View {
-    @ObservedObject var store: SettingsStore
-    @ObservedObject var engine: MenuEngine
-    let showAll: Bool
-    var group: String?
-    let dismiss: () -> Void
-    @State private var query = ""
-    @State private var selection = 0
-    @FocusState private var focused: Bool
-    private var entries: [MenuEntry] {
-        engine.items.filter { entry in
-            let rule = store.config.rules[entry.bundleID] ?? ItemRule()
-            return (showAll || rule.zone == .hidden) && (group == nil || rule.group == group)
-                && (query.isEmpty || "\(entry.name) \(entry.title) \(entry.bundleID) \(rule.group)".localizedCaseInsensitiveContains(query))
-        }
-    }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField(group.map { L10n.text("menu.search.0.group", $0) } ?? (showAll ? L10n.text("menu.search.all.icons.190") : L10n.text("menu.search.collected.icons")), text: $query)
-                    .textFieldStyle(.plain).focused($focused).onSubmit { if !entries.isEmpty { open(entries[min(selection, entries.count - 1)]) } }
-                Button { AppActions.shared.showSettings() } label: { Image(systemName: "gearshape") }.buttonStyle(.plain).help(L10n.text("menu.open.settings"))
-            }.font(.title3).padding(.top, 5)
-            Divider()
-            if !engine.accessibilityGranted {
-                HStack { Text(L10n.text("menu.allow.accessibility.access.to.identify.and.open")).font(.caption); Button(L10n.text("menu.allow.access")) { engine.requestAccessibility() } }
-            }
-            if let error = engine.lastError { Text(error).font(.caption).foregroundStyle(.orange) }
-            if entries.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "tray").font(.system(size: 38)).foregroundStyle(.tertiary)
-                    Text(query.isEmpty ? L10n.text("menu.no.collected.icons.yet") : L10n.text("menu.no.matching.icons.found")).foregroundStyle(.secondary)
-                    if query.isEmpty { Button(L10n.text("menu.open.layout.settings")) { AppActions.shared.showSettings() } }
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 4) {
-                            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                                Button { open(entry) } label: {
-                                    HStack(spacing: 12) {
-                                        if let image = entry.icon { Image(nsImage: image).resizable().scaledToFit().frame(width: 26, height: 26) }
-                                        else { Image(systemName: "app.dashed").frame(width: 26, height: 26) }
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(entry.name).fontWeight(.medium)
-                                            if store.config.showLabels && !entry.title.isEmpty && entry.title != entry.name { Text(entry.title).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-                                        }
-                                        Spacer()
-                                        Text((store.config.rules[entry.bundleID]?.zone ?? .visible).title).font(.caption).foregroundStyle(.secondary)
-                                        Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.secondary)
-                                    }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                                        .background(index == selection ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 10))
-                                }.buttonStyle(.plain).id(index)
-                                    .contextMenu {
-                                        ForEach(ItemZone.allCases) { zone in Button(zone.title) { engine.setZone(zone, for: entry.bundleID) } }
-                                    }
-                            }
-                        }
-                    }.onChange(of: selection) { _, value in proxy.scrollTo(value) }
-                }
-            }
-            Divider()
-            HStack {
-                Text(L10n.text("menu.0.icons.select.return.open.esc.close", entries.count)).font(.caption).foregroundStyle(.secondary)
-                Spacer(); Button(L10n.text("common.done")) { dismiss() }.keyboardShortcut(.cancelAction)
-            }
-        }.padding(18)
-        .background {
-            ZStack {
-                Rectangle().fill(.regularMaterial)
-                if store.config.style.enabled { BarSurface(style: store.config.style) }
-            }
-        }
-        .onAppear { focused = true }
-        .onChange(of: query) { _, _ in selection = 0 }
-        .onKeyPress(.downArrow) { selection = min(max(0, entries.count - 1), selection + 1); return .handled }
-        .onKeyPress(.upArrow) { selection = max(0, selection - 1); return .handled }
-    }
-    private func open(_ entry: MenuEntry) { dismiss(); engine.activate(entry) }
 }

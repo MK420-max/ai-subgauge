@@ -54,6 +54,7 @@ extension TidyBarTests {
         #expect(L10n.resolve(preference: "zh-Hans", preferredLanguages: ["en"]) == "zh-Hans")
     }
 
+    #if DEBUG
     @MainActor @Test func previewLanguageArgumentsAndTranslations() throws {
         let previous = L10n.overrideLanguage
         defer { L10n.overrideLanguage = previous }
@@ -70,4 +71,5 @@ extension TidyBarTests {
         #expect(throws: (any Error).self) { try L10n.configure(arguments: ["AISubGauge", "--lang"]) }
         #expect(throws: (any Error).self) { try PreviewRenderer.directory(arguments: ["AISubGauge", "--render-preview", "/tmp/preview", "--lang", "en", "--lang", "zh-Hans"]) }
     }
+    #endif
 }

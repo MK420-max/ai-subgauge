@@ -57,9 +57,33 @@ extension TidyBarTests {
         monitor.poll(); #expect(monitor.active == ["codex"])
         time = 5; names = []; monitor.poll()
         time = 34; monitor.poll(); #expect(monitor.active == ["codex"])
-        time = 36; monitor.poll(); #expect(monitor.active.isEmpty)
+        time = 35; monitor.poll(); #expect(monitor.active.isEmpty)
         names = ["CODEX"]; monitor.poll(); #expect(monitor.active == ["codex"])
         #expect(RunningVisibility.pollInterval == 5)
+    }
+
+    @MainActor @Test func fakeProcessesDriveDisplayedQuotaThroughExactGraceBoundary() throws {
+        let domain = "test.running-display." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        var time: TimeInterval = 0
+        var names: Set<String> = ["ChatGPT"]
+        let monitor = RunningAIStore(mapping: RunningProcessMap(names: ["codex": ["ChatGPT"]]),
+            clock: { time }, readNames: { names })
+        let store = AIUsageStore(displayDefaults: defaults, fetcher: { _ in throw AIUsageError.signedOut })
+        store.snapshots = [AIUsageSnapshot(provider: .codex, isConnected: true, status: "", source: "fixture")]
+        func poll() {
+            monitor.poll()
+            store.runningProviders = monitor.active
+        }
+        poll(); #expect(store.menuBarDisplaySnapshots.map(\.provider) == [.codex])
+        names = []; time = 5; poll()
+        #expect(store.menuBarDisplaySnapshots.map(\.provider) == [.codex])
+        time = 34.999; poll()
+        #expect(store.menuBarDisplaySnapshots.map(\.provider) == [.codex])
+        time = 35; poll(); #expect(store.menuBarDisplaySnapshots.isEmpty)
+        names = ["CHATGPT"]; poll()
+        #expect(store.menuBarDisplaySnapshots.map(\.provider) == [.codex])
     }
 
     @Test func automaticProviderSelectionRespectsExplicitOverrides() throws {

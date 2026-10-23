@@ -90,20 +90,20 @@ final class HotkeyController: ObservableObject {
 struct HotkeySettingsView: View {
     @ObservedObject var store: SettingsStore
     var body: some View {
-        Form {
-            Section(L10n.text("shortcuts.global.shortcuts")) {
+        SettingsPage {
+            SettingsGroup(title: L10n.text("shortcuts.global.shortcuts")) {
                 shortcutRow(L10n.text("shortcuts.expand.collapse.collection.bar"), id: "global.toggle", binding: Binding(get: { Shortcut(keyCode: store.config.hotkeyCode, modifiers: store.config.hotkeyModifiers) }, set: { store.config.hotkeyCode = $0.keyCode; store.config.hotkeyModifiers = $0.modifiers }))
                 shortcutRow(L10n.text("shortcuts.search.all.menu.bar.icons"), id: "global.search", binding: Binding(get: { Shortcut(keyCode: store.config.searchHotkeyCode, modifiers: store.config.searchHotkeyModifiers) }, set: { store.config.searchHotkeyCode = $0.keyCode; store.config.searchHotkeyModifiers = $0.modifiers }))
                 Text(L10n.text("shortcuts.click.the.shortcut.field.and.press.a")).font(.caption).foregroundStyle(.secondary)
                 if let controller = HotkeyController.shared { HotkeyStatusView(controller: controller) }
             }
-            Section(L10n.text("shortcuts.preset.shortcuts")) {
+            SettingsGroup(title: L10n.text("shortcuts.preset.shortcuts")) {
                 if store.config.presets.isEmpty { Text(L10n.text("shortcuts.save.a.preset.to.assign.a.switching")).foregroundStyle(.secondary) }
                 ForEach(store.config.presets) { preset in
                     shortcutRow(preset.name, id: "preset.\(preset.id.uuidString)", binding: Binding(get: { store.config.presetHotkeys[preset.id.uuidString] ?? Shortcut(keyCode: 0, modifiers: 0) }, set: { store.config.presetHotkeys[preset.id.uuidString] = $0 }))
                 }
             }
-            Section(L10n.text("shortcuts.individual.icon.shortcuts")) {
+            SettingsGroup(title: L10n.text("shortcuts.individual.icon.shortcuts")) {
                 if let engine = AppActions.shared.engine {
                     ForEach(engine.items) { entry in
                         shortcutRow(entry.name, id: "item.\(entry.id)", binding: Binding(get: { store.config.itemHotkeys[entry.id] ?? Shortcut(keyCode: 0, modifiers: 0) }, set: { store.config.itemHotkeys[entry.id] = $0 }))
@@ -111,7 +111,7 @@ struct HotkeySettingsView: View {
                 }
                 Text(L10n.text("shortcuts.temporarily.show.and.open.this.icon.directly")).font(.caption).foregroundStyle(.secondary)
             }
-        }.formStyle(.grouped)
+        }
     }
 
     private func shortcutRow(_ name: String, id: String, binding: Binding<Shortcut>) -> some View {
@@ -119,7 +119,7 @@ struct HotkeySettingsView: View {
             Text(name).accessibilityIdentifier("shortcut-row.\(id)")
             Spacer()
             ShortcutRecorder(shortcut: binding, identifier: id, name: name).frame(width: 150, height: 28)
-            Button(L10n.text("shortcuts.clear")) { binding.wrappedValue.modifiers = 0 }.buttonStyle(.borderless)
+            Button(L10n.text("shortcuts.clear")) { binding.wrappedValue.modifiers = 0 }
                 .accessibilityIdentifier("shortcut-clear.\(id)")
                 .accessibilityLabel(L10n.text("shortcuts.clear.the.shortcut.for.0", name))
         }

@@ -21,6 +21,31 @@ final class EngineTests {
         #expect(MenuEngine.allowedIDs(running: [], discovered: [], own: "self", hidden: ["stopped"]) == ["self"])
     }
 
+    @MainActor
+    @Test
+    func testCollectionRequiresTheRunningCopyToMatchLaunchServices() {
+        let installed = URL(fileURLWithPath: "/Applications/AI SubGauge.app", isDirectory: true)
+        let development = URL(fileURLWithPath: "/tmp/build/dist/AI SubGauge.app", isDirectory: true)
+        #expect(MenuEngine.collectionPreservesOwnEntry(bundleURL: installed, resolvedURL: installed))
+        #expect(!MenuEngine.collectionPreservesOwnEntry(bundleURL: development, resolvedURL: installed))
+        #expect(!MenuEngine.collectionPreservesOwnEntry(bundleURL: installed, resolvedURL: development))
+        #expect(!MenuEngine.collectionPreservesOwnEntry(bundleURL: installed, resolvedURL: nil))
+        #expect(!MenuEngine.collectionPreservesOwnEntry(bundleURL: URL(fileURLWithPath: "/tmp/.build/debug"), resolvedURL: installed))
+    }
+
+    @MainActor
+    @Test
+    func testCollectionRecognizesAnAliasOfTheSameApp() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("TidyBar-own-entry-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let app = directory.appendingPathComponent("AI SubGauge.app", isDirectory: true)
+        let alias = directory.appendingPathComponent("Alias.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: app)
+        #expect(MenuEngine.collectionPreservesOwnEntry(bundleURL: alias, resolvedURL: app))
+        #expect(MenuEngine.collectionPreservesOwnEntry(bundleURL: app, resolvedURL: alias))
+    }
+
     private func entry(_ identity: String = "CPU", bundle: String = "com.test.stats") -> MenuEntry {
         MenuEntry(id: bundle + "::" + identity, bundleID: bundle, name: "测试图标", title: "测试",
                   frame: CGRect(x: 100, y: 0, width: 24, height: 24), icon: nil, isRunning: true, canMove: true)
