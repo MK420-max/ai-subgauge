@@ -33,6 +33,7 @@ cp ../shared/brand/AISubGauge-{light,dark}.icns ../shared/brand/app-{light,dark}
 cp ../shared/brand/AISubGauge-light.icns "$app/Contents/Resources/AISubGauge-light.icns"
 mkdir -p "$app/Contents/Resources/logos"
 cp ../shared/logos/{claude,grok}.png ../shared/logos/LICENSE-LobeHub.txt "$app/Contents/Resources/logos/"
+cp -R ../shared/logos/subscriptions "$app/Contents/Resources/logos/"
 if [[ "${AISUBGAUGE_PRIVATE_LOGOS:-0}" == 1 && -f ../shared/private-logos/grokbot.png ]]; then
   mkdir -p "$app/Contents/Resources/private-logos"
   cp ../shared/private-logos/grokbot.png "$app/Contents/Resources/private-logos/"
@@ -43,8 +44,10 @@ python3 Resources/localize-info.py "$app"
 if [[ -d Resources/ProviderLogos ]]; then cp -R Resources/ProviderLogos "$app/Contents/Resources/ProviderLogos"; fi
 cp THIRD_PARTY_NOTICES.md "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
 cp LICENSE "$app/Contents/Resources/LICENSE"
-# Keep the default ad hoc designated requirement bound to this build's cdhash.
-codesign --force --sign - --identifier com.mike.aisubgauge "$app"
+# Use the default cdhash-bound ad hoc requirement for the app and nested code.
+source "$PWD/sign-app.sh"
+sign_app "$app"
+codesign -dr - "$app"
 codesign --verify --deep --strict "$app"
 ditto -c -k --norsrc --keepParent "$app" "$PWD/dist/AI SubGauge.zip"
 # Preserve the previous local build; merging signed bundles leaves stale sealed resources.

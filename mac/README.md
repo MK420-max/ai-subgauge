@@ -2,9 +2,11 @@
 
 # AI SubGauge
 
-AI SubGauge 1.2.0 for Mac shows the remaining allowance of popular AI subscriptions, with menu bar icon organization built in. It is written in Swift, SwiftUI and AppKit; the interface supports English and Simplified Chinese.
+AI SubGauge 2.0.0 for Mac shows the remaining allowance of popular AI subscriptions, with menu bar icon organization built in. It is written in Swift, SwiftUI and AppKit; the interface supports English and Simplified Chinese.
 
 ## Features
+
+Mac 2.0 adds per-subscription quota arcs in the menu bar, glass panels, and one settings window for subscriptions and menu bar collection. Percentages can be hidden or placed above the arc or beside the icon; subscriptions can be reordered and individually hidden from the menu bar.
 
 - View Codex, Grok Bot and Claude subscription allowances, with reset times and clear error states.
 - Show only running AI providers, with provider checkboxes, a 30-second grace period and an idle menu bar entry.
@@ -17,7 +19,7 @@ Default shortcuts: `⇧⌘B` toggles the collection bar; `⇧⌘Space` searches 
 
 ## Running providers and visibility
 
-In **Settings → AI usage**, choose **Show providers** and **Always show all selected providers**. The same controls are available by right-clicking the AI usage status item. With no explicit checkbox override, connected, previously updated or locally configured accounts remain selected automatically. Each checkbox overrides that account's automatic selection; **Use connected-account defaults** clears these overrides.
+In **Settings → Subscriptions → Account details**, choose **Show providers** and **Always show all selected providers**. The same controls are available by right-clicking the AI usage status item. With no explicit checkbox override, connected, previously updated or locally configured accounts remain selected automatically. Each checkbox overrides that account's automatic selection; **Use connected-account defaults** clears these overrides.
 
 `AlwaysShowAll` is stored in UserDefaults and defaults to `false`. Final visibility is selected providers intersected with providers detected as running or within the grace period. Always Show bypasses that running filter while preserving checkboxes. A provider appears at the next 5-second poll; after its first absent sample, it stays visible for 30 seconds. Reappearance at any poll makes it visible immediately. When none are visible, a monochrome template idle status item shows no quota. Click it for provider selection, Always Show, Settings, diagnostics and Quit. Launch at login remains in Settings → General. The existing “Show remaining quota in the menu bar” preference still controls the AI status item; the main app status item remains available for settings.
 
@@ -40,9 +42,9 @@ python3 ../shared/i18n/check-keys.py
 
 ## App logo and themes
 
-**Settings → General → Theme** offers Follow system, Light and Dark. The `Theme` UserDefaults value is `system`, `light` or `dark`; an absent or unrecognized value follows macOS `effectiveAppearance`. Changes apply immediately to the panel, settings, account sheets and native prompts. The compact panel has one row per visible provider, remaining-quota bars, reset countdowns and equal-width Settings / Refresh buttons. Demo and error messages remain in each row's subtitle.
+**Settings → General → Theme** offers Follow system, Light and Dark. The `Theme` UserDefaults value is `system`, `light` or `dark`; an absent or unrecognized value follows macOS `effectiveAppearance`. Changes apply immediately to the panel, settings, account sheets and native prompts. The compact panel has one row per visible provider, remaining-quota arcs, reset countdowns and equal-width Settings / Refresh buttons. Demo and error messages remain in each row's subtitle.
 
-Colors come from [`../shared/theme.json`](../shared/theme.json), copied into the development app at packaging. Both palettes share the same keys. `#RRGGBB` and `#RRGGBBAA` are supported. Quota colors retain the existing liquid-gauge green/yellow/red and continuous transitions: red through 15%, yellow at 32.5%, green from 50%. Provider icon artwork and visibility rules remain unchanged.
+Colors come from [`../shared/theme.json`](../shared/theme.json), copied into the development app at packaging. Both palettes share the same keys. `#RRGGBB` and `#RRGGBBAA` are supported. Quota colors use green/yellow/red and continuous transitions: red through 15%, yellow at 32.5%, green from 50%. Provider glyphs are monochrome template SVGs with public-license provenance in the shared assets directory.
 
 The bundle's `CFBundleIconFile` is `AISubGauge-light.icns`. Both icon variants are packaged; `NSApp.applicationIconImage` switches with the effective app appearance. Finder retains the static light bundle icon. The idle menu bar image uses the monochrome `tray-mono` artwork at 1×/2× with `isTemplate = true`, allowing macOS to tint it for the menu bar.
 
@@ -92,7 +94,7 @@ zsh build.sh
 zsh package-dmg.sh
 ```
 
-Outputs: `dist/AI SubGauge.app`, `dist/AI SubGauge.zip`, and `dist/AI SubGauge-1.2.0-arm64.dmg`. Intermediate files remain in `.build/`. Packaging does not install or open the app. Additional Swift build options can be passed to `build.sh`; an existing DMG is never overwritten.
+Outputs: `dist/AI SubGauge.app`, `dist/AI SubGauge.zip`, and `dist/AI SubGauge-2.0.0-arm64.dmg`. Intermediate files remain in `.build/`. Packaging does not install or open the app. Additional Swift build options can be passed to `build.sh`; an existing DMG is never overwritten.
 
 In a restricted development sandbox, keep caches and temporary files in this checkout, and use a fresh module cache if this checkout was copied from another path:
 
@@ -131,9 +133,11 @@ If AI SubGauge is useful to you, a ⭐ on GitHub would be much appreciated.
 
 # AI SubGauge（简体中文）
 
-AI SubGauge 1.2.0 Mac 版用于查看常用 AI 订阅的剩余额度，并提供菜单栏图标收纳功能。应用使用 Swift、SwiftUI 和 AppKit 开发，界面支持英文和简体中文。
+AI SubGauge 2.0.0 Mac 版用于查看常用 AI 订阅的剩余额度，并提供菜单栏图标收纳功能。应用使用 Swift、SwiftUI 和 AppKit 开发，界面支持英文和简体中文。
 
 ## 功能
+
+Mac 2.0 提供逐家订阅的菜单栏额度圆弧、玻璃面板，以及集中管理订阅和菜单栏收纳的统一设置窗口。百分比可隐藏、显示在圆弧上方或图标旁；订阅可拖动排序并单独控制菜单栏显示。
 
 - 查看 Codex、Grok Bot 和 Claude 订阅额度、重置时间及错误状态。
 - 只显示正在运行的 AI，支持厂商勾选、30 秒宽限和空闲菜单栏入口。
@@ -146,7 +150,7 @@ AI SubGauge 1.2.0 Mac 版用于查看常用 AI 订阅的剩余额度，并提供
 
 ## 运行状态与显示范围
 
-在 **设置 → AI 用量** 中选择 **显示哪几家** 和 **始终显示已勾选的 AI**；右键 AI 用量状态项也能切换。没有手动勾选记录时，沿用自动规则：已连接、曾更新或本机已配置的账户默认选中。各家勾选会覆盖该账户的自动选择；**恢复自动显示已连接账户** 会清除这些手动记录。
+在 **设置 → 订阅 → 账户详情** 中选择 **显示哪几家** 和 **始终显示已勾选的 AI**；右键 AI 用量状态项也能切换。没有手动勾选记录时，沿用自动规则：已连接、曾更新或本机已配置的账户默认选中。各家勾选会覆盖该账户的自动选择；**恢复自动显示已连接账户** 会清除这些手动记录。
 
 `AlwaysShowAll` 保存在 UserDefaults，默认 `false`。最终可见集合为：已勾选的账户 ∩ 正在运行或处于宽限期的账户。“始终显示”跳过运行筛选，仍遵循勾选。检测每 5 秒进行一次；首次检测到进程消失后保留显示 30 秒。任一次轮询重新检测到进程时立即显示。一家都不可见时，保留单色 template 空闲状态项，不显示额度。点击可进入厂商勾选、始终显示、设置、诊断和退出；开机自启仍在“设置 → 通用”。原有“在菜单栏显示剩余额度”开关继续控制 AI 状态项；应用主状态项仍可用于进入设置。
 
@@ -169,9 +173,9 @@ python3 ../shared/i18n/check-keys.py
 
 ## App 图标与主题
 
-**设置 → 通用 → 主题** 提供“跟随系统 / 浅色 / 深色”。UserDefaults 的 `Theme` 值为 `system`、`light` 或 `dark`；缺失或无法识别时跟随 macOS 的 `effectiveAppearance`。修改后，面板、设置、账户弹窗和系统原生提示即时生效。紧凑面板每家一行，显示剩余额度条和重置倒计时，底部为等宽“设置 / 刷新”按钮；演示和错误提示保留在行内副文字处。
+**设置 → 通用 → 主题** 提供“跟随系统 / 浅色 / 深色”。UserDefaults 的 `Theme` 值为 `system`、`light` 或 `dark`；缺失或无法识别时跟随 macOS 的 `effectiveAppearance`。修改后，面板、设置、账户弹窗和系统原生提示即时生效。紧凑面板每家一行，显示剩余额度圆弧和重置倒计时，底部为等宽“设置 / 刷新”按钮；演示和错误提示保留在行内副文字处。
 
-颜色来自 [`../shared/theme.json`](../shared/theme.json)，打包时复制到开发 App。两套主题的键集合相同，支持 `#RRGGBB` 和 `#RRGGBBAA`。额度条沿用现有液位配色及连续过渡规则：15% 及以下为红色，32.5% 为黄色，50% 起为绿色。厂商图标素材和显示筛选规则保持原有行为。
+颜色来自 [`../shared/theme.json`](../shared/theme.json)，打包时复制到开发 App。两套主题的键集合相同，支持 `#RRGGBB` 和 `#RRGGBBAA`。额度圆弧使用连续过渡配色：15% 及以下为红色，32.5% 为黄色，50% 起为绿色。厂商图标使用公开许可的单色 template SVG，来源记录在共享素材目录。
 
 `CFBundleIconFile` 使用 `AISubGauge-light.icns`，同时打包浅深两版；`NSApp.applicationIconImage` 随应用的有效浅深外观切换。Finder 使用静态浅色包图标。空闲菜单栏图标使用 `tray-mono` 单色素材的 1×/2× 版本，设置 `isTemplate = true`，由 macOS 根据菜单栏外观着色。
 
@@ -221,7 +225,7 @@ zsh build.sh
 zsh package-dmg.sh
 ```
 
-产物为 `dist/AI SubGauge.app`、`dist/AI SubGauge.zip` 和 `dist/AI SubGauge-1.2.0-arm64.dmg`，中间文件留在 `.build/`。打包不会安装或打开应用。`build.sh` 可接收额外 Swift 构建参数；已有 DMG 不会被覆盖。
+产物为 `dist/AI SubGauge.app`、`dist/AI SubGauge.zip` 和 `dist/AI SubGauge-2.0.0-arm64.dmg`，中间文件留在 `.build/`。打包不会安装或打开应用。`build.sh` 可接收额外 Swift 构建参数；已有 DMG 不会被覆盖。
 
 在受限沙箱中，将缓存及临时文件保留在本项目；如果项目从其他路径复制而来，使用新的模块缓存：
 

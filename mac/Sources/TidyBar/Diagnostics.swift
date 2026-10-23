@@ -106,10 +106,9 @@ final class DiagnosticsPreview {
     private var window: NSWindow?
     func show(snapshots: [AIUsageSnapshot]) {
         guard let data = try? DiagnosticsReport.data(snapshots: snapshots), let text = String(data: data, encoding: .utf8) else { return }
-        let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 500),
-            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        let panel = StandaloneWindow.make(size: NSSize(width: 640, height: 500))
         panel.title = L10n.text("diagnostics.export.diagnostics.redacted.preview"); panel.isReleasedWhenClosed = false
-        panel.contentView = NSHostingView(rootView: DiagnosticsPreviewView(text: text, close: { [weak panel] in panel?.close() }).appThemed())
+        panel.contentView = NSHostingView(rootView: DiagnosticsPreviewView(text: text, close: { [weak panel] in panel?.close() }).padding(.top, 28).appThemed())
         panel.center(); window = panel
         panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
     }

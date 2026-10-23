@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import Combine
 import MenuBarShim
+import os
 
 struct MenuPresentationIntent {
     private(set) var expanded = false
@@ -29,7 +30,13 @@ struct MenuPresentationIntent {
 final class MenuEngine: ObservableObject {
     let store: SettingsStore
     @Published var items: [MenuEntry] = []
-    @Published var isExpanded = false
+    @Published var isExpanded = false {
+        didSet {
+            guard isExpanded != oldValue else { return }
+            collectionLogger.info("Collection expanded=\(self.isExpanded, privacy: .public)")
+            recordCollectionDiagnostics()
+        }
+    }
     @Published var accessibilityGranted = false
     @Published var isBusy = false
     @Published var lastError: String?
@@ -44,8 +51,15 @@ final class MenuEngine: ObservableObject {
         return []
     }
     private let scanner = MenuScanner()
+    private let collectionLogger = Logger(subsystem: "com.mike.aisubgauge", category: "collection")
+    private let accessibilityCheck: () -> Bool
+    private var observesSystem = false
+    private var lastCollectionDiagnostic: CollectionDiagnostic?
+    private var lastRuleCounts: [String: Int]?
+    private var lastAXTrusted: Bool?
+    var onAccessibilityRequired: () -> Void = { CollectionAccess.showPrompt() }
     private let worker = DispatchQueue(label: "com.mike.aisubgauge.ax", qos: .userInitiated)
-    private var started = false
+    private(set) var started = false
     private var scanning = false
     private var moving = false
     private var movementActivationPolicy: NSApplication.ActivationPolicy?
@@ -96,12 +110,19 @@ final class MenuEngine: ObservableObject {
     private var observers: [NSObjectProtocol] = []
     private let bookmarkKey = "MenuBarAgentFileBookmark"
 
-    init(store: SettingsStore) { self.store = store }
+    init(store: SettingsStore, accessibilityCheck: @escaping () -> Bool = { AXIsProcessTrusted() }) {
+        self.store = store
+        self.accessibilityCheck = accessibilityCheck
+    }
 
-    func start() {
+    func start(observeSystem: Bool = true) {
         guard !started else { return }
         started = true
+        observesSystem = observeSystem
+        collectionLogger.info("Collection engine started")
         lifecycle += 1
+        // Offline lifecycle tests exercise startup without scanning or changing the host.
+        guard observeSystem else { return }
         pendingSavedOrder = !store.config.order.isEmpty
         pendingSavedOrderIDs = store.config.order
         pendingStartupOrder = pendingSavedOrder
@@ -122,6 +143,8 @@ final class MenuEngine: ObservableObject {
 
     func stop() {
         started = false
+        recordCollectionDiagnostics()
+        observesSystem = false
         overflowExpansionCancellation?.cancel()
         if let policy = movementActivationPolicy { NSApp.setActivationPolicy(policy); movementActivationPolicy = nil }
         lifecycle += 1
@@ -156,9 +179,47 @@ final class MenuEngine: ObservableObject {
         status = L10n.text("layout.all.menu.bar.icons.restored")
     }
 
-    func refresh() {
-        accessibilityGranted = AXIsProcessTrusted()
+    func refreshAccessibility() {
+        let trusted = accessibilityCheck()
+        if trusted != lastAXTrusted {
+            collectionLogger.info("Collection AX trusted=\(trusted, privacy: .public)")
+            lastAXTrusted = trusted
+        }
+        accessibilityGranted = trusted
         if accessibilityGranted && lastError == L10n.text("layout.allow.accessibility.access.in.system.settings.to") { lastError = nil }
+        if accessibilityGranted && lastError == CollectionAccess.message { lastError = nil }
+        recordCollectionDiagnostics()
+    }
+
+    private func recordCollectionDiagnostics() {
+        guard observesSystem else { return }
+        let diagnostic = CollectionDiagnostic(axTrusted: accessibilityGranted, postEventAccess: CGPreflightPostEventAccess(),
+            rules: store.config.rules, engineRunning: started)
+        if diagnostic.ruleCounts != lastRuleCounts {
+            lastRuleCounts = diagnostic.ruleCounts
+            collectionLogger.info("Collection rules total=\(self.store.config.rules.count, privacy: .public) hidden=\(diagnostic.ruleCounts["hidden", default: 0], privacy: .public) alwaysHidden=\(diagnostic.ruleCounts["alwaysHidden", default: 0], privacy: .public)")
+        }
+        if let previous = lastCollectionDiagnostic, diagnostic.hasSameState(as: previous) { return }
+        do {
+            try diagnostic.write(to: CollectionDiagnostic.defaultURL)
+            lastCollectionDiagnostic = diagnostic
+        }
+        catch { collectionLogger.error("Could not write collection diagnostic") }
+    }
+
+    @discardableResult
+    func requireCollectionAccessibility() -> Bool {
+        refreshAccessibility()
+        guard accessibilityGranted else {
+            lastError = CollectionAccess.message
+            onAccessibilityRequired()
+            return false
+        }
+        return true
+    }
+
+    func refresh() {
+        refreshAccessibility()
         guard accessibilityGranted else {
             freshItemIDs.removeAll()
             items = NSWorkspace.shared.runningApplications.compactMap { app in
@@ -197,7 +258,7 @@ final class MenuEngine: ObservableObject {
     }
 
     func toggle() {
-        guard started else { return }
+        guard started, requireCollectionAccessibility() else { return }
         if presentation.toggle() {
             collapseTimer?.invalidate(); collapseTimer = nil
             if !isExpanded { showEverything = false }
@@ -249,7 +310,7 @@ final class MenuEngine: ObservableObject {
         }
     }
     func showAll() {
-        guard started else { return }
+        guard started, requireCollectionAccessibility() else { return }
         presentation.expand()
         collapseTimer?.invalidate(); collapseTimer = nil
         isExpanded = true
@@ -282,8 +343,15 @@ final class MenuEngine: ObservableObject {
     static func allowedIDs(running: Set<String>, discovered: Set<String>, own: String, hidden: Set<String>) -> Set<String> {
         running.union(discovered).union([own]).subtracting(hidden.subtracting([own]))
     }
+
+    static func collectionPreservesOwnEntry(bundleURL: URL, resolvedURL: URL?) -> Bool {
+        guard bundleURL.isFileURL, bundleURL.pathExtension == "app", let resolvedURL, resolvedURL.isFileURL else { return false }
+        return bundleURL.standardizedFileURL.resolvingSymlinksInPath() == resolvedURL.standardizedFileURL.resolvingSymlinksInPath()
+    }
+
     func applyVisibility() {
         guard started else { return }
+        recordCollectionDiagnostics()
         let front = NSWorkspace.shared.frontmostApplication
         let runningApplications = NSWorkspace.shared.runningApplications
         let activeOwners = Set(runningApplications.filter { app in
@@ -300,6 +368,22 @@ final class MenuEngine: ObservableObject {
         let running = Set(runningApplications.compactMap(\.bundleIdentifier))
         let effectiveHidden = hidden.intersection(running.union(Set(items.map(\.bundleID))))
         let desired = effectiveHidden.isEmpty ? nil : Self.allowedIDs(running: running, discovered: Set(items.map(\.bundleID)), own: own, hidden: effectiveHidden)
+        // Assessment mode resolves bundle IDs through LaunchServices. Allowing our ID
+        // does not protect a different running copy (for example mac/dist vs /Applications).
+        if desired != nil, !Self.collectionPreservesOwnEntry(bundleURL: Bundle.main.bundleURL,
+                         resolvedURL: NSWorkspace.shared.urlForApplication(withBundleIdentifier: own)) {
+            generation += 1
+            applyTimeout?.cancel(); applyTimeout = nil
+            STMenuBarShim.invalidate(pendingToken)
+            STMenuBarShim.invalidate(activeToken)
+            pendingToken = nil; activeToken = nil; pendingGeneration = nil
+            appliedIDs = nil; desiredIDs = nil
+            let message = L10n.text("layout.collection.requires.registered.app")
+            setVisibilityError(message)
+            status = message
+            updateBusy()
+            return
+        }
         if desired == desiredIDs, pendingGeneration != nil { return }
         if desired == appliedIDs, pendingGeneration == nil {
             desiredIDs = desired
@@ -477,7 +561,7 @@ final class MenuEngine: ObservableObject {
 
     func requestAccessibility() {
         _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") { NSWorkspace.shared.open(url) }
+        CollectionAccess.openSettings()
         refresh()
     }
     private func updateBusy() { isBusy = scanning || pendingGeneration != nil || moving || activating }
@@ -787,7 +871,7 @@ final class MenuEngine: ObservableObject {
     }
     private func drainSavedOrder() {
         guard started, pendingSavedOrder, !moving, !scanning, !waitingForOrderVisibility, !waitingForStartupOrderRetry else { return }
-        if !accessibilityGranted && AXIsProcessTrusted() {
+        if !accessibilityGranted && accessibilityCheck() {
             refresh()
             return
         }

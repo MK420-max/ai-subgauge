@@ -12,9 +12,9 @@ let package = Package(
     platforms: [.macOS("27.0")],
     products: [.executable(name: "AISubGauge", targets: ["TidyBar"])],
     targets: [
-        // The Objective-C bridge relies on ARC for object and callback lifetimes.
+        .systemLibrary(name: "SystemMembership"),
         .target(name: "MenuBarShim", cSettings: [.unsafeFlags(["-fobjc-arc"])]),
-        .executableTarget(name: "TidyBar", dependencies: ["MenuBarShim"]),
+        .executableTarget(name: "TidyBar", dependencies: ["SystemMembership", "MenuBarShim"]),
         .testTarget(name: "TidyBarTests", dependencies: ["TidyBar"], swiftSettings: testingSettings)
     ],
     swiftLanguageVersions: [.v5]

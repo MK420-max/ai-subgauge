@@ -7,8 +7,8 @@
 <key>CFBundleIdentifier</key><string>com.mike.aisubgauge</string>
 <key>CFBundleExecutable</key><string>AISubGauge</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.2.0</string>
-<key>CFBundleVersion</key><string>4</string>
+<key>CFBundleShortVersionString</key><string>2.0.0</string>
+<key>CFBundleVersion</key><string>200</string>
 <key>CFBundleDevelopmentRegion</key><string>en</string>
 <key>CFBundleLocalizations</key><array><string>zh-Hans</string><string>en</string></array>
 <key>CFBundleIconFile</key><string>AISubGauge-light.icns</string>
@@ -20,5 +20,5 @@
 <key>NSAppleEventsUsageDescription</key><string>permissions.music</string>
 <key>NSLocationUsageDescription</key><string>permissions.location</string>
 <key>NSLocationWhenInUseUsageDescription</key><string>permissions.location</string>
-<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>菜单栏收纳自动化</string><key>CFBundleURLSchemes</key><array><string>macshouna</string></array></dict></array>
+<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>AI SubGauge Automation</string><key>CFBundleURLSchemes</key><array><string>macshouna</string></array></dict></array>
 </dict></plist>

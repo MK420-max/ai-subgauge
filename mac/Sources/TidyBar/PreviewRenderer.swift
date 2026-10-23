@@ -1,3 +1,4 @@
+#if DEBUG
 import AppKit
 import SwiftUI
 
@@ -74,3 +75,5 @@ enum PreviewRenderer {
         try data.write(to: url)
     }
 }
+
+#endif

@@ -79,10 +79,10 @@ final class ClaudeWebConnection: NSObject, ObservableObject, WKNavigationDelegat
     func connect() {
         if let window { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
         let browser = prepareBrowser()
-        let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 920, height: 720), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        let panel = StandaloneWindow.make(size: NSSize(width: 920, height: 720))
         panel.title = L10n.text("connection.connect.claude.official.usage")
         panel.isReleasedWhenClosed = false
-        panel.contentView = NSHostingView(rootView: ClaudeWebConnectionView(connection: self, browser: browser))
+        panel.contentView = NSHostingView(rootView: ClaudeWebConnectionView(connection: self, browser: browser).padding(.top, 28))
         panel.center(); window = panel
         panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         if browser.url == nil { browser.load(URLRequest(url: URL(string: "https://claude.ai/settings/usage")!)) }

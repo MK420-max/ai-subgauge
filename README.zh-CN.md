@@ -9,12 +9,14 @@
 [![macOS](https://img.shields.io/badge/macOS-27%2B-000000?logo=apple&logoColor=white)](mac/README.md)
 [![Windows](https://img.shields.io/badge/Windows-tray-0078D6?logo=windows&logoColor=white)](windows/README.md#简体中文)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](#安装)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](#安装)
 [![GitHub stars](https://img.shields.io/github/stars/MK420-max/ai-subgauge?style=social)](https://github.com/MK420-max/ai-subgauge/stargazers)
 
 [English](README.md) · **简体中文**
 
 </div>
+
+Mac 2.0 新增额度圆弧菜单栏图标、玻璃面板和统一设置窗口，并提供菜单栏收纳。Windows 保持现有托盘界面。
 
 ## 截图
 
@@ -29,7 +31,7 @@
 
 ![macOS 菜单栏图例](docs/images/mac-menubar-legend.png)
 
-macOS 菜单栏：每家一个图标，后面是当前周期的剩余额度。`—` 表示暂无当前数值；`⚠︎` 表示上次刷新失败，点开菜单可看原因。
+macOS 2.0 菜单栏：每家订阅显示服务图标和剩余额度圆弧，百分比可隐藏、放在圆弧上方或图标旁。玻璃面板显示额度详情、重置时间和刷新错误。上方截图为早期界面。
 
 ![Windows 托盘图例](docs/images/windows-tray-legend.png)
 

@@ -245,7 +245,18 @@ enum ClaudeUsageSource {
         }
         let session = URLSession(configuration: sessionConfiguration(), delegate: NoUsageRedirects(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        return try await fetch(token: token) { try await session.data(for: $0) }
+        return try await fetch(token: token) { try await loadUsage($0, session: session) }
+    }
+
+    static func loadUsage(_ request: URLRequest, session: URLSession) async throws -> (Data, URLResponse) {
+        let (bytes, response) = try await session.bytes(for: request)
+        defer { bytes.task.cancel() }
+        var data = Data()
+        for try await byte in bytes {
+            guard data.count < 1_048_576 else { throw AIUsageError.invalidResponse }
+            data.append(byte)
+        }
+        return (data, response)
     }
 
     static func fetch(token: String, load: (URLRequest) async throws -> (Data, URLResponse)) async throws -> AIUsageSnapshot {
@@ -255,6 +266,7 @@ enum ClaudeUsageSource {
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response) = try await load(request)
+        guard data.count <= 1_048_576 else { throw AIUsageError.invalidResponse }
         guard let response = response as? HTTPURLResponse, response.url?.host == url.host,
               response.url == url else { throw AIUsageError.invalidResponse }
         guard response.statusCode == 200 else {
@@ -332,6 +344,8 @@ final class AIUsageStore: ObservableObject {
         let available = Dictionary(uniqueKeysWithValues: visibleSnapshots.map { ($0.provider, $0) })
         return snapshots.filter { visible.contains($0.provider.rawValue) }.map { available[$0.provider] ?? $0 }
     }
+    var subscriptionPreferences: SubscriptionPreferences { SubscriptionPreferences(defaults: displayDefaults) }
+    private(set) var scheduledRefreshInterval: TimeInterval?
     private var timer: Timer?
     private var tasks: [AIUsageProvider: Task<Void, Never>] = [:]
     private var generation = 0
@@ -359,11 +373,23 @@ final class AIUsageStore: ObservableObject {
 
     func start() {
         preferencesObserver = NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).sink { [weak self] _ in
-            Task { @MainActor in self?.objectWillChange.send() }
+            Task { @MainActor in
+                guard let self else { return }
+                self.objectWillChange.send()
+                if self.timer != nil { self.scheduleRefresh() }
+            }
         }
         guard timer == nil else { return }
         refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
+        scheduleRefresh()
+    }
+
+    private func scheduleRefresh() {
+        let interval = TimeInterval(subscriptionPreferences.refreshMinutes * 60)
+        guard scheduledRefreshInterval != interval || timer == nil else { return }
+        timer?.invalidate()
+        scheduledRefreshInterval = interval
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
     }
@@ -371,6 +397,7 @@ final class AIUsageStore: ObservableObject {
     func stop() {
         preferencesObserver = nil
         timer?.invalidate(); timer = nil
+        scheduledRefreshInterval = nil
         generation += 1
         tasks.values.forEach { $0.cancel() }; tasks.removeAll()
         isRefreshing = false

@@ -168,3 +168,28 @@ extension TidyBarTests.GrokBillingRetryTests {
         #expect(data.count == 1_048_576)
     }
 }
+
+// Serialized with the Grok streaming cases because they share the protocol's stop signal.
+extension TidyBarTests.GrokBillingRetryTests {
+    @Test func streamedClaudeUsageCancelsOversizedBodiesAndAcceptsExactlyOneMiB() async throws {
+        let configuration = ClaudeUsageSource.sessionConfiguration()
+        configuration.protocolClasses = [BillingStreamProtocol.self]
+        configuration.timeoutIntervalForResource = 3
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        for status in [200, 302, 401, 503] {
+            BillingStreamProtocol.stopped = TestSignal()
+            var request = URLRequest(url: URL(string: "https://example.test/claude-usage")!)
+            request.setValue(String(status), forHTTPHeaderField: "X-Fixture-Status")
+            do {
+                _ = try await ClaudeUsageSource.loadUsage(request, session: session)
+                Issue.record("Oversized Claude body must be cancelled")
+            } catch AIUsageError.invalidResponse {} // A timeout must fail this test.
+            #expect(await BillingStreamProtocol.stopped.wait(timeout: 1))
+        }
+        var request = URLRequest(url: URL(string: "https://example.test/claude-usage")!)
+        request.setValue("1048576", forHTTPHeaderField: "X-Fixture-Length")
+        let (data, _) = try await ClaudeUsageSource.loadUsage(request, session: session)
+        #expect(data.count == 1_048_576)
+    }
+}

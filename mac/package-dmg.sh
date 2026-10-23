@@ -3,7 +3,9 @@ set -eu
 cd "${0:A:h}"
 
 archive="$PWD/dist/AI SubGauge.zip"
-output="$PWD/dist/AI SubGauge-1.2.0-arm64.dmg"
+version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
+[[ "$version" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]] || { print -u2 '版本号格式无效，必须为 x.y.z。'; exit 1; }
+output="$PWD/dist/AI SubGauge-${version}-arm64.dmg"
 [[ -f "$archive" ]] || { print -u2 '未找到已验收的应用 ZIP，请先完成构建与验收。'; exit 1; }
 [[ ! -e "$output" ]] || { print -u2 '目标安装包已存在，请先保留或移走旧版本。'; exit 1; }
 
@@ -14,12 +16,13 @@ mkdir "$stage/磁盘内容" "$stage/解压"
 ditto -x -k --noextattr --noqtn "$archive" "$stage/解压"
 app="$stage/解压/AI SubGauge.app"
 [[ -d "$app" ]] || { print -u2 'ZIP 中未找到 AI SubGauge.app。'; exit 1; }
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" == "$version" ]] || { print -u2 'ZIP 版本与 Resources/Info.plist 不一致。'; exit 1; }
 codesign --verify --deep --strict "$app"
 ditto --noextattr --noqtn --norsrc "$app" "$stage/磁盘内容/AI SubGauge.app"
 codesign --verify --deep --strict "$stage/磁盘内容/AI SubGauge.app"
 ln -s /Applications "$stage/磁盘内容/应用程序"
-cat > "$stage/磁盘内容/安装说明.txt" <<'EOF'
-AI SubGauge · AI SubGauge 1.2.0
+cat > "$stage/磁盘内容/安装说明.txt" <<EOF
+AI SubGauge · ${version}
 
 将“AI SubGauge.app”拖入“应用程序”，然后从应用程序文件夹打开。
 

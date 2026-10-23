@@ -1,12 +1,12 @@
-# AI SubGauge 1.2.0 迁移方案
+# AI SubGauge 2.0.0 迁移方案
 
 ## 标识与入口
 
-显示名统一为 AI SubGauge，版本为 1.2.0；SwiftPM 产物和 bundle 内可执行文件为 AISubGauge，源代码模块保留 TidyBar。新 bundle ID 为 `com.mike.aisubgauge`，API 钥匙串服务为 `com.mike.aisubgauge.api`。
+显示名统一为 AI SubGauge，版本为 2.0.0；SwiftPM 产物和 bundle 内可执行文件为 AISubGauge，源代码模块保留 TidyBar。新 bundle ID 为 `com.mike.aisubgauge`，API 钥匙串服务为 `com.mike.aisubgauge.api`。
 
 旧域为 `com.mike.menubartidy`，旧 API 服务为 `com.mike.menubartidy.api`。运行时代码的旧标识集中在 `Sources/TidyBar/LegacyIdentifiers.swift`，仅用于兼容读取。菜单栏主入口、AI 用量、留白、分组、小组件的 autosave 与可访问性标识均使用新前缀。
 
-普通启动时，在 SettingsStore、菜单栏及用量刷新之前调用 AppMigration。`--render-preview <dir>` 在创建 AppDelegate 之前分流，完全跳过迁移、真实 defaults、钥匙串和凭据读取。
+普通启动时，在 SettingsStore、菜单栏及用量刷新之前调用 AppMigration。DEBUG 构建中的 `--render-preview <dir>` 在创建 AppDelegate 之前分流，完全跳过迁移、真实 defaults、钥匙串和凭据读取。
 
 ## 三阶段复制
 

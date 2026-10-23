@@ -205,7 +205,7 @@ final class UnificationTests {
         #expect(!text.contains("private-"))
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(Set(object.keys) == ["app", "version", "os", "providers"])
-        #expect(object["version"] as? String == "1.2.0")
+        #expect(object["version"] as? String == "2.0.0")
         #expect((object["providers"] as? [[String: String]])?.first?["state"] == "error")
     }
 
@@ -242,6 +242,20 @@ final class UnificationTests {
         #expect(!GrokCLITrust.allowedPath(URL(fileURLWithPath: "/tmp/grok")))
     }
 
+    @Test func developmentPreviewEntryAndRendererAreDebugOnly() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = root.appendingPathComponent("Sources/TidyBar")
+        let app = try String(contentsOf: source.appendingPathComponent("App.swift"), encoding: .utf8)
+        let entry = try #require(app.range(of: "if let directory = try PreviewRenderer.directory"))
+        let guardStart = try #require(app.range(of: "#if DEBUG"))
+        let guardEnd = try #require(app.range(of: "#endif", range: guardStart.upperBound..<app.endIndex))
+        #expect(guardStart.upperBound < entry.lowerBound && entry.upperBound < guardEnd.lowerBound)
+        let renderer = try String(contentsOf: source.appendingPathComponent("PreviewRenderer.swift"), encoding: .utf8)
+        #expect(renderer.hasPrefix("#if DEBUG\n"))
+        #expect(renderer.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("#endif"))
+    }
+
+    #if DEBUG
     @MainActor
     @Test
     func previewArgumentsAndDemoSnapshotsAreOfflineAndDeterministic() throws {
@@ -251,5 +265,6 @@ final class UnificationTests {
         #expect(PreviewRenderer.snapshots.compactMap { $0.windows.first?.remainingPercent } == [72, 45, 88])
         #expect(PreviewRenderer.snapshots.count == 3)
     }
+    #endif
 }
 }

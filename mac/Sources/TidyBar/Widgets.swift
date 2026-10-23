@@ -410,12 +410,12 @@ struct WidgetSettingsView: View {
     @ObservedObject var store: SettingsStore
     @ObservedObject private var data = WidgetData.shared
     var body: some View {
-        Form {
-            Section(L10n.text("widgets.clock")) {
+        SettingsPage {
+            SettingsGroup(title: L10n.text("widgets.clock")) {
                 Toggle(L10n.text("widgets.show.date.and.time.in.the.menu"), isOn: $store.config.widgets.clock)
                 Text(L10n.text("widgets.uses.the.current.system.time.zone.click")).font(.caption).foregroundStyle(.secondary)
             }
-            Section(L10n.text("widgets.upcoming.calendar")) {
+            SettingsGroup(title: L10n.text("widgets.upcoming.calendar")) {
                 Toggle(L10n.text("widgets.show.calendar.widget"), isOn: $store.config.widgets.calendar)
                 if store.config.widgets.calendar {
                     Text(data.calendarStatus).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
@@ -423,7 +423,7 @@ struct WidgetSettingsView: View {
                     ForEach(Array(data.events.enumerated()), id: \.offset) { _, event in Text(event).font(.callout) }
                 }
             }
-            Section(L10n.text("widgets.music.controls")) {
+            SettingsGroup(title: L10n.text("widgets.music.controls")) {
                 Toggle(L10n.text("widgets.show.music.widget"), isOn: Binding(
                     get: { store.config.widgets.music },
                     set: { enabled in
@@ -433,7 +433,7 @@ struct WidgetSettingsView: View {
                 ))
                 if store.config.widgets.music {
                     Text(data.musicStatus).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                    HStack {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], alignment: .leading, spacing: 8) {
                         Button(L10n.text("widgets.connect.music")) { data.music() }
                         Button(L10n.text("widgets.previous.track")) { data.music(command: "previous") }
                         Button(L10n.text("widgets.play.pause")) { data.music(command: "playpause") }
@@ -446,18 +446,32 @@ struct WidgetSettingsView: View {
                     Text(L10n.text("widgets.controls.the.macos.music.app.the.system")).font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Section(L10n.text("widgets.weather.751")) {
+            SettingsGroup(title: L10n.text("widgets.weather.751")) {
                 Toggle(L10n.text("widgets.show.weather.widget"), isOn: $store.config.widgets.weather)
                 if store.config.widgets.weather {
                     TextField(L10n.text("widgets.city.name"), text: $store.config.widgets.weatherCity)
-                    TextField(L10n.text("widgets.latitude"), value: $store.config.widgets.weatherLatitude, format: .number.precision(.fractionLength(4)))
-                    TextField(L10n.text("widgets.longitude"), value: $store.config.widgets.weatherLongitude, format: .number.precision(.fractionLength(4)))
+                    HStack {
+                        Text(L10n.text("widgets.latitude"))
+                        Spacer()
+                        TextField(L10n.text("widgets.latitude"), value: $store.config.widgets.weatherLatitude, format: .number.precision(.fractionLength(4)))
+                            .labelsHidden().frame(width: 100)
+                        Stepper(L10n.text("widgets.latitude"), value: $store.config.widgets.weatherLatitude, in: -90...90, step: 0.0001)
+                            .labelsHidden()
+                    }
+                    HStack {
+                        Text(L10n.text("widgets.longitude"))
+                        Spacer()
+                        TextField(L10n.text("widgets.longitude"), value: $store.config.widgets.weatherLongitude, format: .number.precision(.fractionLength(4)))
+                            .labelsHidden().frame(width: 100)
+                        Stepper(L10n.text("widgets.longitude"), value: $store.config.widgets.weatherLongitude, in: -180...180, step: 0.0001)
+                            .labelsHidden()
+                    }
                     Text(data.weatherStatus).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                     Button(L10n.text("widgets.refresh.weather")) { data.refreshWeather(options: store.config.widgets, force: true) }
                     Text(L10n.text("widgets.when.enabled.only.the.entered.coordinates.are")).font(.caption).foregroundStyle(.secondary)
                     if let url = URL(string: "https://open-meteo.com/") { Link(L10n.text("widgets.open.meteo.weather.data.and.license"), destination: url) }
                 }
             }
-        }.formStyle(.grouped)
+        }
     }
 }

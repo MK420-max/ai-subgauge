@@ -164,6 +164,6 @@ struct AIProviderVisibilityView: View {
                     store.objectWillChange.send()
                 }
             }
-        }.toggleStyle(.checkbox)
+        }.toggleStyle(SettingsSwitchStyle())
     }
 }

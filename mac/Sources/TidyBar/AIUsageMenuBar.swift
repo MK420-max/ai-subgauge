@@ -4,8 +4,24 @@ import SwiftUI
 
 /// App-local preference, shared by the settings checkbox and status-item owner.
 enum AIUsageMenuBarPreference {
+    enum PercentagePlacement: String, CaseIterable {
+        case arcTop, beside
+        var titleKey: String { "settings.percentagePlacement.\(rawValue)" }
+    }
     static let key = "aiUsage.showInMenuBar"
-    static var isEnabled: Bool { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
+    static let percentageKey = "aiUsage.showPercentageInMenuBar"
+    static let placementKey = "aiUsage.percentagePlacement"
+    static var isEnabled: Bool { isEnabled(defaults: .standard) }
+    static func isEnabled(defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: key) as? Bool ?? true
+    }
+    static var showsPercentage: Bool { showsPercentage(defaults: .standard) }
+    static func showsPercentage(defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: percentageKey) as? Bool ?? true
+    }
+    static func percentagePlacement(defaults: UserDefaults = .standard) -> PercentagePlacement {
+        defaults.string(forKey: placementKey).flatMap(PercentagePlacement.init(rawValue:)) ?? .arcTop
+    }
 }
 
 @MainActor
@@ -95,22 +111,19 @@ struct AIUsageProviderLogo: View {
 }
 
 @MainActor
-final class AIUsageMenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
+final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
     private let store: AIUsageStore
     private let onOpenUsage: () -> Void
     private let running = RunningAIStore()
     private var statusItem: NSStatusItem?
+    private var appearanceObservation: NSKeyValueObservation?
     private var subscriptions: Set<AnyCancellable> = []
     private var timer: Timer?
     private var started = false
-    private var popover: NSPopover?
-    private var escapeMonitor: Any?
-
-    var statusWindowFrame: CGRect? {
-        guard let window = statusItem?.button?.window, let top = NSScreen.screens.first?.frame.maxY else { return nil }
-        let frame = window.frame
-        guard frame.width > 0, frame.height > 0 else { return nil }
-        return CGRect(x: frame.minX, y: top - frame.maxY, width: frame.width, height: frame.height)
+    var panel: AIUsagePanel { PopupManager.shared.panel }
+    var themeOverride: AppTheme?
+    private var presentationSnapshots: [AIUsageSnapshot] {
+        store.menuBarDisplaySnapshots
     }
 
     init(store: AIUsageStore, onOpenUsage: @escaping () -> Void) {
@@ -119,12 +132,12 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegat
         super.init()
     }
 
-    func start() {
+    func start(observeRunning: Bool = true) {
         guard !started else { return }
         started = true
         running.$active.sink { [weak self] active in self?.store.runningProviders = active }.store(in: &subscriptions)
         store.$runningProviders.sink { [weak self] _ in Task { @MainActor in self?.update() } }.store(in: &subscriptions)
-        running.start()
+        if observeRunning { running.start() }
         store.$snapshots.sink { [weak self] _ in Task { @MainActor in self?.update() } }.store(in: &subscriptions)
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).sink { [weak self] _ in
             Task { @MainActor in self?.update() }
@@ -142,46 +155,54 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegat
     }
 
     private func removeStatusItem() {
-        closePopover()
+        closePanel()
+        appearanceObservation = nil
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
         statusItem = nil
     }
 
     private func update() {
         guard started else { return }
-        guard AIUsageMenuBarPreference.isEnabled else { removeStatusItem(); return }
+        // Keep one app entry when quota display is off.
+        let preferences = store.subscriptionPreferences
+        let idle = !AIUsageMenuBarPreference.isEnabled(defaults: preferences.defaults) || presentationSnapshots.isEmpty
+        let image = idle ? AppBrand.idleImage() : QuotaMenuImage.image(
+            snapshots: presentationSnapshots,
+            showPercentage: AIUsageMenuBarPreference.showsPercentage(defaults: preferences.defaults),
+            colorsByQuota: preferences.colorsByQuota,
+            placement: AIUsageMenuBarPreference.percentagePlacement(defaults: preferences.defaults))
+        let length = image.size.width
         if statusItem == nil {
-            let positionKey = "NSStatusItem Preferred Position com.mike.aisubgauge.ai-usage"
+            let autosaveName = (Bundle.main.bundleIdentifier ?? "com.mike.aisubgauge") + ".ai-usage"
+            let positionKey = "NSStatusItem Preferred Position " + autosaveName
             if UserDefaults.standard.object(forKey: positionKey) == nil {
                 UserDefaults.standard.set(0, forKey: positionKey)
             }
-            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            item.autosaveName = "com.mike.aisubgauge.ai-usage"
+            let item = NSStatusBar.system.statusItem(withLength: length)
+            item.autosaveName = autosaveName
             item.button?.setAccessibilityIdentifier("com.mike.aisubgauge.ai-usage")
             item.button?.setAccessibilityLabel(L10n.text("menu.ai.remaining.quota"))
             item.button?.target = self
-            item.button?.action = #selector(statusItemClicked)
+            item.button?.action = #selector(statusItemClicked(_:))
             item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            item.isVisible = true
             statusItem = item
+            appearanceObservation = item.button?.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor in self?.update() }
+            }
         }
-        let idle = RunningVisibility.showsIdle(Set(store.displaySnapshots.map { $0.provider.rawValue }))
-        statusItem?.button?.image = idle ? AppBrand.idleImage() : nil
+        statusItem?.button?.image = image
+        statusItem?.button?.needsDisplay = true
+        statusItem?.button?.imageScaling = .scaleProportionallyDown
+        statusItem?.length = length
         statusItem?.button?.contentTintColor = idle ? .secondaryLabelColor : nil
-        let title = NSMutableAttributedString(string: "")
-        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.labelColor]
         let now = Date()
         var tooltip: [String] = [L10n.text("menu.ai.account.quota.click.or.right.click")]
-        for (index, connected) in store.displaySnapshots.enumerated() {
+        for connected in presentationSnapshots {
             let provider = connected.provider
-            if index > 0 { title.append(NSAttributedString(string: "  ", attributes: attributes)) }
-            let attachment = NSTextAttachment()
-            attachment.image = AIUsageBrand.menuImage(for: provider, size: 20)
-            attachment.bounds = NSRect(x: 0, y: -6, width: 20, height: 20)
-            title.append(NSAttributedString(attachment: attachment))
             let snapshot: AIUsageSnapshot? = connected
             let window = snapshot?.windows.first { Self.remaining($0.remainingPercent) != nil }
             let value = Self.displayValue(connected)
-            title.append(NSAttributedString(string: " " + Self.statusTitle(connected), attributes: attributes))
             let cached = Self.isCached(snapshot, now: now)
             var line = L10n.text("menu.0.1.remaining", provider.title, value)
             if let window { line += L10n.text("common.parenthesized", window.title) }
@@ -191,53 +212,59 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegat
             if let source = snapshot?.source { line += L10n.text("menu.source") + source }
             tooltip.append(line)
         }
-        statusItem?.button?.attributedTitle = title
+        statusItem?.button?.title = ""
+        statusItem?.button?.imagePosition = .imageOnly
         statusItem?.button?.toolTip = idle ? L10n.text("idle.tooltip") : tooltip.joined(separator: "\n")
-        if let hosting = popover?.contentViewController as? NSHostingController<AIUsagePopoverView> {
-            hosting.rootView.now = now
-            let availableHeight = (hosting.view.window?.screen?.visibleFrame.height ?? 700) - 50
-            let height = max(194, min(600, min(availableHeight, AIUsagePopoverView.height(for: store.displaySnapshots.count))))
-            hosting.rootView.height = height
-            popover?.contentSize.height = height
-        }
+        if PopupManager.shared.kind == .quota, panel.isVisible { updatePanel() }
     }
 
-    @objc private func statusItemClicked() {
-        guard let item = statusItem, let button = item.button else { return }
-        if store.displaySnapshots.isEmpty || NSApp.currentEvent?.type == .rightMouseUp || NSApp.currentEvent?.modifierFlags.contains(.control) == true {
-            closePopover()
+    @objc func statusItemClicked(_ button: NSButton) {
+        let event = StatusItemApplication.actionEvent
+        guard PopupManager.shared.consume(event) else { return }
+        if event?.modifierFlags.contains(.option) == true {
+            AppActions.shared.showSearch()
+        } else if event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true {
+            PopupManager.shared.dismiss()
+            guard let item = statusItem else { return }
             let menu = NSMenu(); menu.delegate = self
             item.menu = menu; button.performClick(nil); item.menu = nil
-            return
+        } else {
+            togglePanel(relativeTo: button)
         }
-        if popover?.isShown == true { closePopover(); return }
-        let popover = NSPopover()
-        popover.behavior = .transient; popover.delegate = self
-        let desiredHeight = AIUsagePopoverView.height(for: store.displaySnapshots.count)
-        let availableHeight = (button.window?.screen?.visibleFrame.height ?? 700) - 50
-        let height = max(194, min(600, min(availableHeight, desiredHeight)))
-        popover.contentSize = NSSize(width: AIUsagePopoverView.width, height: height)
-        popover.contentViewController = NSHostingController(rootView: AIUsagePopoverView(store: store, now: Date(), height: height) { [weak self] in self?.openUsage() })
-        self.popover = popover
-        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53, self?.popover?.isShown == true else { return event }
-            self?.closePopover(); return nil
-        }
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
     }
 
-    private func closePopover() {
-        let current = popover; popover = nil
-        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor); self.escapeMonitor = nil }
-        current?.close()
-        current?.contentViewController = nil
+    func togglePanel(relativeTo button: NSView) {
+        PopupManager.shared.present(.quota, anchor: button) { panel in
+            updatePanel()
+            let anchor = PopupManager.screenFrame(button) ?? .zero
+            let visible = (button.window?.screen ?? NSScreen.main)?.visibleFrame ?? anchor
+            let x = min(max(visible.minX + 8, anchor.midX - panel.frame.width / 2), visible.maxX - panel.frame.width - 8)
+            panel.setFrameTopLeftPoint(NSPoint(x: x, y: min(visible.maxY, anchor.minY) - 6))
+        }
     }
 
-    func popoverDidClose(_ notification: Notification) {
-        guard let closed = notification.object as? NSPopover, closed === popover else { return }
-        closePopover()
+    var statusWindowFrame: CGRect? {
+        guard let frame = statusButtonFrame, let top = NSScreen.screens.first?.frame.maxY else { return nil }
+        return CGRect(x: frame.minX, y: top - frame.maxY, width: frame.width, height: frame.height)
     }
+    var statusButtonFrame: NSRect? { PopupManager.screenFrame(statusItem?.button) }
+
+    private func updatePanel() {
+        let mode = themeOverride ?? AppTheme.resolve(preference: UserDefaults.standard.string(forKey: AppTheme.preferenceKey),
+            systemDark: NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+        let available = (statusItem?.button?.window?.screen?.visibleFrame.height ?? 700) - 50
+        let height = max(194, min(600, min(available, AIUsagePopoverView.height(for: store.subscriptionDisplaySnapshots.count))))
+        panel.appearance = NSAppearance(named: mode == .dark ? .darkAqua : .aqua)
+        panel.setContentSize(NSSize(width: AIUsagePopoverView.width, height: height))
+        let view = AIUsagePopoverView(store: store, now: Date(), height: height,
+            onOpenUsage: { [weak self] in self?.openUsage() }, themeOverride: mode,
+            onOpenPanelSettings: { [weak self] in self?.openPanelSettings() })
+        if let hosting = panel.contentView as? NSHostingView<AIUsagePopoverView> { hosting.rootView = view }
+        else { panel.contentView = NSHostingView(rootView: view) }
+    }
+
+    func dismissForClick(at point: NSPoint) { PopupManager.shared.dismissForClick(at: point) }
+    func closePanel() { PopupManager.shared.dismiss(.quota) }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
@@ -291,6 +318,17 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegat
         let always = NSMenuItem(title: L10n.text("settings.alwaysShowAll"), action: #selector(toggleAlways), keyEquivalent: "")
         always.target = self; always.state = UserDefaults.standard.bool(forKey: AIVisibilityPreferences.alwaysShowKey) ? .on : .off
         menu.addItem(always)
+        if AppActions.shared.engine?.accessibilityGranted == false {
+            let permission = NSMenuItem(title: CollectionAccess.message, action: #selector(openCollectionAccessibility), keyEquivalent: "")
+            permission.target = self; menu.addItem(permission)
+        }
+        for (title, action) in [(L10n.text("menu.toggleCollection"), #selector(toggleCollection)),
+                                (L10n.text("menu.open.collection.bar"), #selector(toggleCollectionBar)),
+                                (L10n.text("menu.search.all.icons"), #selector(searchCollection)),
+                                (L10n.text("menu.collectionSettings"), #selector(openCollectionSettings))] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self; menu.addItem(item)
+        }
         let settings = NSMenuItem(title: L10n.text("menu.settings"), action: #selector(openSettings), keyEquivalent: "")
         settings.target = self; menu.addItem(settings)
         let diagnostics = NSMenuItem(title: L10n.text("menu.diagnostics"), action: #selector(exportDiagnostics), keyEquivalent: "")
@@ -303,6 +341,16 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegat
         open.target = self; menu.addItem(open)
     }
 
+    @objc func toggleCollection() {
+        guard let engine = AppActions.shared.engine, engine.requireCollectionAccessibility() else { return }
+        PopupManager.shared.dismiss()
+        engine.toggle()
+    }
+    @objc func toggleCollectionBar() { AppActions.shared.toggle() }
+    @objc func openCollectionSettings() { PopupManager.shared.dismiss(); AppActions.shared.showCollectionSettings() }
+    @objc func openCollectionAccessibility() { CollectionAccess.openSettings() }
+    @objc private func searchCollection() { AppActions.shared.showSearch() }
+
     @objc private func toggleProvider(_ sender: NSMenuItem) {
         guard let key = sender.representedObject as? String, let provider = AIUsageProvider(rawValue: key) else { return }
         AIVisibilityPreferences.setSelected(!store.selectedProviders.contains(key), provider: provider)
@@ -313,11 +361,12 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegat
         UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: AIVisibilityPreferences.alwaysShowKey), forKey: AIVisibilityPreferences.alwaysShowKey)
         update()
     }
-    @objc private func openSettings() { closePopover(); AppActions.shared.showSettings() }
+    @objc private func openSettings() { closePanel(); AppActions.shared.showSettings() }
+    func openPanelSettings() { closePanel(); AppActions.shared.showSettings(.panel) }
     @objc private func exportDiagnostics() { DiagnosticsPreview.shared.show(snapshots: store.snapshots) }
     @objc private func quitApp() { NSApp.terminate(nil) }
     @objc private func refreshAll() { store.refresh() }
-    @objc private func openUsage() { closePopover(); onOpenUsage() }
+    @objc private func openUsage() { closePanel(); onOpenUsage() }
 
     static func statusTitle(_ snapshot: AIUsageSnapshot) -> String {
         displayValue(snapshot) + (snapshot.error != nil ? " ⚠︎" : "")
@@ -355,4 +404,23 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegat
         format.dateFormat = L10n.text("format.dateTime")
         return format.string(from: value)
     }
+}
+
+/// One reusable window; the SwiftUI glass is the panel's only visible shell.
+final class AIUsagePanel: NSPanel {
+    var onDismiss: (() -> Void)?
+    init() {
+        super.init(contentRect: NSRect(x: 0, y: 0, width: AIUsagePopoverView.width, height: 283),
+                   styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        identifier = NSUserInterfaceItemIdentifier("ai-usage.panel")
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        isReleasedWhenClosed = false
+        hidesOnDeactivate = false
+        level = .popUpMenu
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+    }
+    override var canBecomeKey: Bool { true }
+    override func cancelOperation(_ sender: Any?) { onDismiss?() }
 }

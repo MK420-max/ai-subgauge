@@ -17,10 +17,9 @@ final class GrokBuildConnection: NSObject, ObservableObject, NSWindowDelegate {
 
     func connect() {
         if window == nil {
-            let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 205),
-                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            let panel = StandaloneWindow.make()
             panel.title = L10n.text("connection.connect.grok.live.usage"); panel.isReleasedWhenClosed = false
-            panel.delegate = self; panel.contentView = NSHostingView(rootView: GrokBuildConnectionView(connection: self))
+            panel.delegate = self; panel.contentView = NSHostingView(rootView: GrokBuildConnectionView(connection: self).padding(.top, 28))
             panel.center(); window = panel
         }
         window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)

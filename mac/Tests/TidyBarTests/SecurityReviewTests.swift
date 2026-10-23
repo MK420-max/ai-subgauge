@@ -2,7 +2,6 @@ import AppKit
 import Darwin
 import Foundation
 import Testing
-import MenuBarShim
 @testable import TidyBar
 
 extension TidyBarTests {

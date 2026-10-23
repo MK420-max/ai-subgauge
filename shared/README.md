@@ -8,11 +8,15 @@ Provider identity PNGs, including the matching `dark/` variants, come from [Lobe
 
 The supplied Lobe assets cover OpenAI, Anthropic/Claude, Gemini, GitHub Copilot, Cursor, Kimi, GLM/Zhipu, Mistral, DeepSeek, OpenRouter, MiniMax and xAI/Grok brand identifiers. Code licensing does not transfer trademark rights.
 
+## Mac 2.0 subscription glyphs
+
+Mac 2.0 uses monochrome template SVGs with remaining-quota arcs. Grok uses `logos/subscriptions/grok.svg` from `@lobehub/icons-static-svg@1.97.0` (MIT). The other subscription SVGs use pinned Simple Icons releases (CC0 1.0) or the same Lobe package. See [sources and SHA-256 hashes](logos/subscriptions/SOURCES.md); retain the bundled MIT notices.
+
 ## Grok icons and optional private artwork
 
-Public builds use the Lobe Icons Grok logo with the standard liquid gauge. The Grok Bot app extractions `grokbot.png` and `grokbot-head.png` are excluded from the open-source distribution and moved to `shared/private-logos/`, which is ignored by .gitignore; the old Windows copies are in its `windows/` subdirectory. Public builds exclude private artwork even when it exists locally. For a local private build, provide `shared/private-logos/grokbot-head.png` and explicitly add `-p:IncludePrivateLogos=true` to `dotnet build` or `dotnet publish` (for example, `dotnet build .\src\AISubGauge\AISubGauge.csproj -c Release -p:IncludePrivateLogos=true` from `windows/`). Only when the property is `true` and the file exists does the csproj embed it and define `PRIVATE_GROK_LOGO` to retain the head-mask gauge. Otherwise it uses `shared/logos/grok.png`. Tests support both builds. For a local private Mac build, provide `shared/private-logos/grokbot.png` and run `AISUBGAUGE_PRIVATE_LOGOS=1 zsh build.sh` from `mac/`. The private logo is copied only when the flag is explicitly set to `1` and the file exists. Redistribution permission for the private artwork has not been confirmed.
+Windows public builds use the Lobe Icons Grok PNG with the standard liquid gauge; Mac 2.0 uses the SVG and quota arc described above. The Grok Bot app extractions `grokbot.png` and `grokbot-head.png` are excluded from the open-source distribution and moved to `shared/private-logos/`, which is ignored by .gitignore; the old Windows copies are in its `windows/` subdirectory. Public builds exclude private artwork even when it exists locally. For a local private build, provide `shared/private-logos/grokbot-head.png` and explicitly add `-p:IncludePrivateLogos=true` to `dotnet build` or `dotnet publish` (for example, `dotnet build .\src\AISubGauge\AISubGauge.csproj -c Release -p:IncludePrivateLogos=true` from `windows/`). Only when the property is `true` and the file exists does the csproj embed it and define `PRIVATE_GROK_LOGO` to retain the head-mask gauge. Otherwise it uses `shared/logos/grok.png`. Tests support both builds. For a local private Mac build, provide `shared/private-logos/grokbot.png` and run `AISUBGAUGE_PRIVATE_LOGOS=1 zsh build.sh` from `mac/`. The private logo is copied only when the flag is explicitly set to `1` and the file exists. Redistribution permission for the private artwork has not been confirmed.
 
-公开版使用 Lobe Icons 的 Grok 图标，按普通液位渲染。Grok Bot app 提取的 `grokbot.png` 与 `grokbot-head.png` 不随开源仓库分发，已移入被 .gitignore 忽略的 `shared/private-logos/`；旧 Windows 副本位于其 `windows/` 子目录。公开构建即使在本地发现私有素材也不会打包。本地私用构建须准备 `shared/private-logos/grokbot-head.png`，并为 `dotnet build` 或 `dotnet publish` 显式添加 `-p:IncludePrivateLogos=true`（例如从 `windows/` 运行 `dotnet build .\src\AISubGauge\AISubGauge.csproj -c Release -p:IncludePrivateLogos=true`）。只有属性为 `true` 且文件存在时，csproj 才会嵌入并定义 `PRIVATE_GROK_LOGO`，继续使用头像蒙版液位；否则回退到 `shared/logos/grok.png`。测试兼容两种构建。Mac 本地私用构建：将素材放在 `shared/private-logos/grokbot.png`，从 `mac/` 运行 `AISUBGAUGE_PRIVATE_LOGOS=1 zsh build.sh`。只有显式设置为 `1` 且文件存在时才复制私有图标。私有素材的再分发许可未确认。
+Windows 公开版使用 Lobe Icons 的 Grok PNG 和普通液位；Mac 2.0 使用上述 SVG 和额度圆弧。Grok Bot app 提取的 `grokbot.png` 与 `grokbot-head.png` 不随开源仓库分发，已移入被 .gitignore 忽略的 `shared/private-logos/`；旧 Windows 副本位于其 `windows/` 子目录。公开构建即使在本地发现私有素材也不会打包。本地私用构建须准备 `shared/private-logos/grokbot-head.png`，并为 `dotnet build` 或 `dotnet publish` 显式添加 `-p:IncludePrivateLogos=true`（例如从 `windows/` 运行 `dotnet build .\src\AISubGauge\AISubGauge.csproj -c Release -p:IncludePrivateLogos=true`）。只有属性为 `true` 且文件存在时，csproj 才会嵌入并定义 `PRIVATE_GROK_LOGO`，继续使用头像蒙版液位；否则回退到 `shared/logos/grok.png`。测试兼容两种构建。Mac 本地私用构建：将素材放在 `shared/private-logos/grokbot.png`，从 `mac/` 运行 `AISUBGAUGE_PRIVATE_LOGOS=1 zsh build.sh`。只有显式设置为 `1` 且文件存在时才复制私有图标。私有素材的再分发许可未确认。
 
 ## Trademarks
 
@@ -23,7 +27,7 @@ OpenAI and Codex belong to OpenAI; Anthropic and Claude to Anthropic PBC; Gemini
 | Platform | Version | Installation location |
 | --- | --- | --- |
 | Windows | 1.2.0 | `%LOCALAPPDATA%\Programs\AISubGauge\AISubGauge.exe` |
-| Mac | 1.2.0 | `/Applications/AI SubGauge.app` |
+| Mac | 2.0.0 | `/Applications/AI SubGauge.app` |
 
 [Shared strings](strings.md) records the wording and formatting contract for both platforms. The Mac implementation now uses the shared language catalogs and process map described below. Windows can adopt the same JSON formats in its next implementation pass.
 
