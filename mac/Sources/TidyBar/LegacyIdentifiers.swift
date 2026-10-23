@@ -13,7 +13,7 @@ enum LegacyIdentifiers {
 
 enum AppIdentifiers {
     static let name = "AI SubGauge"
-    static let version = "2.0.0"
+    static let version = "2.0.1"
     static let bundleID = "com.mike.aisubgauge"
     static let keychainService = bundleID + ".api"
     static var supportDirectory: URL {

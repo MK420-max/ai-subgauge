@@ -9,7 +9,7 @@
 [![macOS](https://img.shields.io/badge/macOS-27%2B-000000?logo=apple&logoColor=white)](mac/README.md)
 [![Windows](https://img.shields.io/badge/Windows-tray-0078D6?logo=windows&logoColor=white)](windows/README.md#简体中文)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](#安装)
+[![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)](#安装)
 [![GitHub stars](https://img.shields.io/github/stars/MK420-max/ai-subgauge?style=social)](https://github.com/MK420-max/ai-subgauge/stargazers)
 
 [English](README.md) · **简体中文**
