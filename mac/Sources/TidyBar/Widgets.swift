@@ -311,6 +311,7 @@ final class WidgetController: NSObject, NSMenuDelegate {
     private let store: SettingsStore
     private let data: WidgetData
     private var items: [String: NSStatusItem] = [:]
+    private var statusFramesRegistration: UUID?
     private var timer: Timer?
     private var observation: NSObjectProtocol?
     private var subscription: AnyCancellable?
@@ -318,6 +319,9 @@ final class WidgetController: NSObject, NSMenuDelegate {
     init(store: SettingsStore, data: WidgetData? = nil) { self.store = store; self.data = data ?? .shared; super.init() }
     func start() {
         guard timer == nil else { return }
+        statusFramesRegistration = PopupManager.shared.registerStatusFrames { [weak self] in
+            self?.items.values.flatMap { PopupManager.statusButtonFrames($0.button) } ?? []
+        }
         subscription = data.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.render() } }
         observation = NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in
             guard let self, self.store.config.widgets.calendar else { return }
@@ -327,6 +331,8 @@ final class WidgetController: NSObject, NSMenuDelegate {
         update()
     }
     func stop() {
+        if let statusFramesRegistration { PopupManager.shared.unregisterStatusFrames(statusFramesRegistration) }
+        statusFramesRegistration = nil
         timer?.invalidate(); timer = nil
         subscription?.cancel(); subscription = nil
         if let observation { NotificationCenter.default.removeObserver(observation) }; observation = nil
@@ -370,6 +376,9 @@ final class WidgetController: NSObject, NSMenuDelegate {
         items["music"]?.button?.toolTip = data.musicStatus
         items["weather"]?.button?.title = data.temperature.map { "\(Int($0.rounded()))°" } ?? L10n.text("widgets.weather")
         items["weather"]?.button?.toolTip = data.weatherStatus
+    }
+    func menuWillOpen(_ menu: NSMenu) {
+        PopupManager.shared.recordStatusItemAction()
     }
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()

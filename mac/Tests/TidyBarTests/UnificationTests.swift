@@ -205,7 +205,7 @@ final class UnificationTests {
         #expect(!text.contains("private-"))
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(Set(object.keys) == ["app", "version", "os", "providers"])
-        #expect(object["version"] as? String == "2.0.0")
+        #expect(object["version"] as? String == "2.0.1")
         #expect((object["providers"] as? [[String: String]])?.first?["state"] == "error")
     }
 

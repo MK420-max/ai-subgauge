@@ -116,6 +116,7 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
     private let onOpenUsage: () -> Void
     private let running = RunningAIStore()
     private var statusItem: NSStatusItem?
+    private var statusButtonRegistration: UUID?
     private var appearanceObservation: NSKeyValueObservation?
     private var subscriptions: Set<AnyCancellable> = []
     private var timer: Timer?
@@ -156,6 +157,8 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
 
     private func removeStatusItem() {
         closePanel()
+        if let statusButtonRegistration { PopupManager.shared.unregisterStatusFrames(statusButtonRegistration) }
+        statusButtonRegistration = nil
         appearanceObservation = nil
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
         statusItem = nil
@@ -187,6 +190,7 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
             item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
             item.isVisible = true
             statusItem = item
+            if let button = item.button { statusButtonRegistration = PopupManager.shared.registerStatusButton(button) }
             appearanceObservation = item.button?.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
                 Task { @MainActor in self?.update() }
             }
@@ -219,6 +223,7 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc func statusItemClicked(_ button: NSButton) {
+        PopupManager.shared.recordStatusItemAction()
         let event = StatusItemApplication.actionEvent
         guard PopupManager.shared.consume(event) else { return }
         if event?.modifierFlags.contains(.option) == true {

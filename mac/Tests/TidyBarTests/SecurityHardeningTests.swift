@@ -64,14 +64,14 @@ enum SyntheticCodeFixture {
         let guardRange = try #require(source.range(of: String(validation)))
         let output = try #require(source.range(of: "output=\"$PWD/dist/"))
         #expect(read.upperBound < guardRange.lowerBound && guardRange.upperBound < output.lowerBound)
-        for version in ["2.0.0", "12.34.56", "2.0", "2.0.0-beta", "../2.0.0", "2.0.0/extra", "2.0.0\n", ""] {
+        for version in ["2.0.1", "12.34.56", "2.0", "2.0.1-beta", "../2.0.1", "2.0.1/extra", "2.0.1\n", ""] {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
             process.arguments = ["-c", "version=$1\n" + validation, "version-fixture", version]
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
             try process.run(); process.waitUntilExit()
-            #expect((process.terminationStatus == 0) == ["2.0.0", "12.34.56"].contains(version))
+            #expect((process.terminationStatus == 0) == ["2.0.1", "12.34.56"].contains(version))
         }
     }
 
@@ -193,11 +193,11 @@ enum SyntheticCodeFixture {
     @Test func diagnosticsRedactStructuredAndTextLocations() throws {
         let object: [String: Any] = ["SSID": "Private Network", "weatherLatitude": 49.2827, "longitude": -123.1207,
             "nested": ["kind": "wifi", "value": "Private Network", "name": "Private Network"],
-            "message": "SSID=\"Private Network\" coordinates=[49.2827, -123.1207]", "version": "2.0.0"]
+            "message": "SSID=\"Private Network\" coordinates=[49.2827, -123.1207]", "version": "2.0.1"]
         let data = try JSONSerialization.data(withJSONObject: DiagnosticsRedactor.value(object))
         let text = String(decoding: data, as: UTF8.self)
         for secret in ["Private Network", "49.2827", "-123.1207"] { #expect(!text.contains(secret)) }
-        #expect(text.contains("2.0.0"))
+        #expect(text.contains("2.0.1"))
     }
 
     @MainActor @Test func oversizedSettingsLoadPreservesTheFileAndReportsAnError() throws {
