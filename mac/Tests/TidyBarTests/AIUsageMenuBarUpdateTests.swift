@@ -8,7 +8,8 @@ extension TidyBarTests {
         let updates = AIUsageMenuBarUpdates()
         func key(_ appearance: NSAppearance.Name = .aqua) -> AIUsageMenuBarRenderKey {
             AIUsageMenuBarRenderKey(snapshots: [], enabled: false, showPercentage: true,
-                colorsByQuota: true, placement: .arcTop, appearance: appearance)
+                colorsByQuota: true, placement: .arcTop,
+                appearance: AIUsageMenuBarAppearance(NSAppearance(named: appearance)!))
         }
         var renders = 0
         let first = updates.image(for: key()) {
@@ -29,27 +30,53 @@ extension TidyBarTests {
         #expect(renders == 3)
     }
 
-    @MainActor @Test func menuAppearanceFiltersEquivalentKVONotifications() throws {
+    @MainActor @Test func menuAppearanceFiltersEquivalentKVONotifications() async throws {
         _ = NSApplication.shared
         let view = NSView()
         view.appearance = try #require(NSAppearance(named: .aqua))
-        var names: [NSAppearance.Name] = []
-        let observation = AIUsageMenuBarUpdates.appearanceChanges(of: view).sink { names.append($0) }
+        let aqua = AIUsageMenuBarAppearance(NSAppearance(named: .aqua)!)
+        let dark = AIUsageMenuBarAppearance(NSAppearance(named: .darkAqua)!)
+        var states: [AIUsageMenuBarAppearance] = []
+        let observation = AIUsageMenuBarUpdates.appearanceChanges(of: view).sink { states.append($0) }
         defer { observation.cancel() }
         func notify() {
             view.willChangeValue(forKey: "effectiveAppearance")
             view.didChangeValue(forKey: "effectiveAppearance")
         }
+        func drain() async {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { continuation.resume() }
+            }
+        }
         for _ in 0..<200 { notify() }
-        #expect(names.isEmpty)
+        await drain()
+        #expect(states.isEmpty)
         view.appearance = try #require(NSAppearance(named: .darkAqua))
         notify()
-        #expect(names == [.darkAqua])
+        await drain()
+        #expect(states == [dark])
         for _ in 0..<200 { notify() }
-        #expect(names == [.darkAqua])
+        await drain()
+        #expect(states == [dark])
         view.appearance = try #require(NSAppearance(named: .aqua))
         notify()
-        #expect(names == [.darkAqua, .aqua])
+        await drain()
+        #expect(states == [dark, aqua])
+        for name in [NSAppearance.Name.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua] {
+            let appearance = try #require(NSAppearance(named: name))
+            let expected = AIUsageMenuBarAppearance(appearance)
+            let previous = states.last
+            let count = states.count
+            view.appearance = appearance
+            notify()
+            await drain()
+            #expect(states.last == expected)
+            #expect(states.count == count + (expected == previous ? 0 : 1))
+            let settledCount = states.count
+            for _ in 0..<200 { notify() }
+            await drain()
+            #expect(states.count == settledCount)
+        }
     }
 
     @MainActor @Test func menuUpdateRequestsCoalesceAndReadLatestInputs() async throws {
@@ -84,6 +111,69 @@ extension TidyBarTests {
         updates.reset()
         try await Task.sleep(nanoseconds: 50_000_000)
         #expect(applied == [2])
+    }
+
+    @MainActor @Test func menuReentrantRequestsRunInNextBatchAndCoalesce() async throws {
+        let updates = AIUsageMenuBarUpdates()
+        defer { updates.reset() }
+        var input = 0
+        var applied: [Int] = []
+        func update() {
+            applied.append(input)
+            if applied.count == 1 {
+                for value in 1...200 {
+                    input = value
+                    updates.request { update() }
+                }
+            }
+        }
+        updates.request { update() }
+        for _ in 0..<100 where applied.count < 2 { try await Task.sleep(nanoseconds: 5_000_000) }
+        #expect(applied == [0, 200])
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(applied == [0, 200])
+    }
+
+    @MainActor @Test func menuResetDuringUpdateKeepsNewBatchPendingAndCancellable() async throws {
+        let updates = AIUsageMenuBarUpdates()
+        defer { updates.reset() }
+        var applied: [Int] = []
+        updates.request {
+            applied.append(1)
+            updates.reset()
+            updates.request { applied.append(2) }
+        }
+        for _ in 0..<100 where applied.isEmpty { try await Task.sleep(nanoseconds: 5_000_000) }
+        #expect(applied == [1])
+        updates.request { applied.append(3) } // Must join the still-pending second batch.
+        for _ in 0..<100 where applied.count < 2 { try await Task.sleep(nanoseconds: 5_000_000) }
+        #expect(applied == [1, 2])
+        updates.request { applied.append(4) }
+        updates.reset()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(applied == [1, 2])
+    }
+
+    @MainActor @Test func menuSelectionChangesPreserveValidEntriesInMixedDictionary() throws {
+        let domain = "menu-selection-" + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let preferences = SubscriptionPreferences(defaults: defaults)
+        var selections: [[String: Bool]] = []
+        let observation = preferences.changes.map(\.display.selection).removeDuplicates()
+            .sink { selections.append($0) }
+        defer { observation.cancel() }
+        for selected in [false, true] {
+            defaults.set(["codex": NSNumber(value: selected), "claude": "invalid"],
+                forKey: AIVisibilityPreferences.selectionKey)
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+            #expect(preferences.state.display.selection == ["codex": selected])
+            #expect(AIVisibilityPreferences.selected(automatic: ["claude"], defaults: defaults)
+                == (selected ? ["codex", "claude"] : ["claude"]))
+        }
+        #expect(selections == [[:], ["codex": false], ["codex": true]])
+        AIVisibilityPreferences.setSelected(false, provider: .grok, defaults: defaults)
+        #expect(preferences.state.display.selection == ["codex": true, "grok": false])
     }
 
     @MainActor @Test func menuDefaultsFilterAutosaveWritesAndTrackEveryRelevantPreference() throws {

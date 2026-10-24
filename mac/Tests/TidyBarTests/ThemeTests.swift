@@ -4,6 +4,25 @@ import Testing
 @testable import TidyBar
 
 extension TidyBarTests {
+    @MainActor @Test func themeRestartReappliesIconAfterStop() {
+        _ = NSApplication.shared
+        let previousIcon = NSApp.applicationIconImage
+        let previousAppearance = NSApp.appearance
+        let controller = ThemeController()
+        defer {
+            controller.stop()
+            NSApp.applicationIconImage = previousIcon
+            NSApp.appearance = previousAppearance
+        }
+        controller.start()
+        controller.stop()
+        let placeholder = NSImage(size: NSSize(width: 16, height: 16))
+        NSApp.applicationIconImage = placeholder
+        #expect(NSApp.applicationIconImage.size == placeholder.size)
+        controller.start()
+        #expect(NSApp.applicationIconImage.size != placeholder.size)
+    }
+
     @Test func sharedThemesParseWithMatchingKeysAndValidColors() throws {
         let document = try #require(try JSONSerialization.jsonObject(with:
             Data(contentsOf: SharedResources.url("theme.json"))) as? [String: Any])

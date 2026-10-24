@@ -30,7 +30,7 @@ struct SubscriptionPreferences {
             percentage: AIUsageMenuBarPreference.showsPercentage(defaults: defaults),
             placement: AIUsageMenuBarPreference.percentagePlacement(defaults: defaults), colors: colorsByQuota,
             order: order, hidden: Set(defaults.stringArray(forKey: Self.hiddenKey) ?? []),
-            selection: defaults.dictionary(forKey: AIVisibilityPreferences.selectionKey) as? [String: Bool] ?? [:],
+            selection: AIVisibilityPreferences.selectionOverrides(defaults: defaults),
             alwaysShow: defaults.bool(forKey: AIVisibilityPreferences.alwaysShowKey),
             theme: defaults.string(forKey: AppTheme.preferenceKey).flatMap(AppTheme.init(rawValue:))),
             refreshMinutes: refreshMinutes)

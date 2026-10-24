@@ -36,11 +36,11 @@ struct AIUsageMenuBarRenderKey: Equatable {
     let showPercentage: Bool
     let colorsByQuota: Bool
     let placement: AIUsageMenuBarPreference.PercentagePlacement
-    let appearance: NSAppearance.Name
+    let appearance: AIUsageMenuBarAppearance
 
     @MainActor
     init(snapshots: [AIUsageSnapshot], enabled: Bool, showPercentage: Bool, colorsByQuota: Bool,
-         placement: AIUsageMenuBarPreference.PercentagePlacement, appearance: NSAppearance.Name) {
+         placement: AIUsageMenuBarPreference.PercentagePlacement, appearance: AIUsageMenuBarAppearance) {
         idle = !enabled || snapshots.isEmpty
         segments = idle ? [] : snapshots.map { Segment(provider: $0.provider, percent: QuotaMenuImage.displayedPercent($0)) }
         self.showPercentage = !idle && showPercentage
@@ -163,13 +163,15 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
     func start(observeRunning: Bool = true) {
         guard !started else { return }
         started = true
-        running.$active.removeDuplicates().sink { [weak self] active in
+        running.$active.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] active in
             guard let self, self.store.runningProviders != active else { return }
             self.store.runningProviders = active
         }.store(in: &subscriptions)
-        store.$runningProviders.removeDuplicates().sink { [weak self] _ in self?.requestUpdate() }.store(in: &subscriptions)
+        store.$runningProviders.removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.requestUpdate() }.store(in: &subscriptions)
         if observeRunning { running.start() }
-        store.$snapshots.removeDuplicates().sink { [weak self] _ in self?.requestUpdate() }.store(in: &subscriptions)
+        store.$snapshots.removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.requestUpdate() }.store(in: &subscriptions)
         store.subscriptionPreferences.changes.map(\.display).removeDuplicates().dropFirst()
             .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.requestUpdate() }.store(in: &subscriptions)
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
@@ -228,7 +230,7 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
             if let button = item.button { statusButtonRegistration = PopupManager.shared.registerStatusButton(button) }
             if let button = item.button {
                 appearanceObservation = AIUsageMenuBarUpdates.appearanceChanges(of: button)
-                    .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.requestUpdate() }
+                    .sink { [weak self] _ in self?.requestUpdate() }
             }
         }
         // The button can differ from NSApp, including on the very first render.
@@ -237,7 +239,8 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
             enabled: AIUsageMenuBarPreference.isEnabled(defaults: preferences.defaults),
             showPercentage: AIUsageMenuBarPreference.showsPercentage(defaults: preferences.defaults),
             colorsByQuota: preferences.colorsByQuota,
-            placement: AIUsageMenuBarPreference.percentagePlacement(defaults: preferences.defaults), appearance: appearance.name)
+            placement: AIUsageMenuBarPreference.percentagePlacement(defaults: preferences.defaults),
+            appearance: AIUsageMenuBarAppearance(appearance))
         let idle = key.idle
         if let image = updates.image(for: key, render: {
             idle ? AppBrand.idleImage() : QuotaMenuImage.bitmapImage(snapshots: snapshots,

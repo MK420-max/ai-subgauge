@@ -11,7 +11,8 @@ extension TidyBarTests {
                  colors: Bool = true, placement: AIUsageMenuBarPreference.PercentagePlacement = .arcTop,
                  appearance: NSAppearance.Name = .aqua) -> AIUsageMenuBarRenderKey {
             AIUsageMenuBarRenderKey(snapshots: snapshots, enabled: enabled, showPercentage: percentage,
-                colorsByQuota: colors, placement: placement, appearance: appearance)
+                colorsByQuota: colors, placement: placement,
+                appearance: AIUsageMenuBarAppearance(NSAppearance(named: appearance)!))
         }
         let initial = key([snapshot])
         var metadata = snapshot
@@ -40,7 +41,6 @@ extension TidyBarTests {
         #expect(key([snapshot], colors: false) != initial)
         #expect(key([snapshot], placement: .beside) != initial)
         #expect(key([snapshot], appearance: .darkAqua) != initial)
-        #expect(key([snapshot], appearance: .accessibilityHighContrastAqua) != initial)
         var other = snapshot; other.provider = .claude
         #expect(key([other]) != initial)
         #expect(key([snapshot, other]) != key([other, snapshot]))
@@ -52,7 +52,8 @@ extension TidyBarTests {
         var snapshot = AIUsageSnapshot(provider: .codex, windows: [], isConnected: true, status: "fixture", source: "fixture")
         func key(_ snapshot: AIUsageSnapshot) -> AIUsageMenuBarRenderKey {
             AIUsageMenuBarRenderKey(snapshots: [snapshot], enabled: true, showPercentage: true,
-                colorsByQuota: true, placement: .arcTop, appearance: .aqua)
+                colorsByQuota: true, placement: .arcTop,
+                appearance: AIUsageMenuBarAppearance(NSAppearance(named: .aqua)!))
         }
         let unknown = key(snapshot)
         for percent in [Double.nan, .infinity, -1, 101] {
@@ -65,5 +66,24 @@ extension TidyBarTests {
         #expect(key(snapshot) == unknown)
         snapshot.error = "different error, same unknown pixels"
         #expect(key(snapshot) == unknown)
+    }
+
+    @MainActor @Test func menuRenderKeyTracksResolvedColorsEvenWhenAppearanceNameMatches() {
+        let snapshot = AIUsageSnapshot(provider: .codex,
+            windows: [AIUsageWindow(id: "quota", title: "quota", remainingPercent: 72)], isConnected: true,
+            status: "fixture", source: "fixture")
+        let appearance = AIUsageMenuBarAppearance(NSAppearance(named: .aqua)!)
+        let changed = AIUsageMenuBarAppearance(dark: appearance.dark, quotaColors: [.red, .orange, .green])
+        func key(_ style: AIUsageMenuBarAppearance) -> AIUsageMenuBarRenderKey {
+            AIUsageMenuBarRenderKey(snapshots: [snapshot], enabled: true, showPercentage: true,
+                colorsByQuota: true, placement: .arcTop, appearance: style)
+        }
+        let updates = AIUsageMenuBarUpdates()
+        var renders = 0
+        #expect(key(appearance) != key(changed))
+        for style in [appearance, appearance, changed, changed] {
+            _ = updates.image(for: key(style)) { renders += 1; return NSImage() }
+        }
+        #expect(renders == 2)
     }
 }
