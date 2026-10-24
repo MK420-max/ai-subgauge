@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 /// Independent presentation preferences; never changes account selection or credentials.
@@ -8,6 +9,37 @@ struct SubscriptionPreferences {
     static let refreshKey = "aiUsage.refreshMinutes"
     static let refreshOptions = [1, 2, 5, 15, 30]
     var defaults: UserDefaults = .standard
+
+    struct DisplayState: Equatable {
+        let enabled: Bool
+        let percentage: Bool
+        let placement: AIUsageMenuBarPreference.PercentagePlacement
+        let colors: Bool
+        let order: [AIUsageProvider]
+        let hidden: Set<String>
+        let selection: [String: Bool]
+        let alwaysShow: Bool
+        let theme: AppTheme?
+    }
+    struct State: Equatable {
+        let display: DisplayState
+        let refreshMinutes: Int
+    }
+    var state: State {
+        State(display: DisplayState(enabled: AIUsageMenuBarPreference.isEnabled(defaults: defaults),
+            percentage: AIUsageMenuBarPreference.showsPercentage(defaults: defaults),
+            placement: AIUsageMenuBarPreference.percentagePlacement(defaults: defaults), colors: colorsByQuota,
+            order: order, hidden: Set(defaults.stringArray(forKey: Self.hiddenKey) ?? []),
+            selection: defaults.dictionary(forKey: AIVisibilityPreferences.selectionKey) as? [String: Bool] ?? [:],
+            alwaysShow: defaults.bool(forKey: AIVisibilityPreferences.alwaysShowKey),
+            theme: defaults.string(forKey: AppTheme.preferenceKey).flatMap(AppTheme.init(rawValue:))),
+            refreshMinutes: refreshMinutes)
+    }
+    /// Defaults notifications include AppKit autosave writes. Only effective app preferences matter.
+    var changes: AnyPublisher<State, Never> {
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .map { _ in self.state }.prepend(state).removeDuplicates().eraseToAnyPublisher()
+    }
 
     var order: [AIUsageProvider] {
         let saved = (defaults.stringArray(forKey: Self.orderKey) ?? []).compactMap(AIUsageProvider.init(rawValue:))

@@ -372,7 +372,7 @@ final class AIUsageStore: ObservableObject {
     }
 
     func start() {
-        preferencesObserver = NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).sink { [weak self] _ in
+        preferencesObserver = subscriptionPreferences.changes.dropFirst().sink { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 self.objectWillChange.send()

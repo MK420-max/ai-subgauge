@@ -673,8 +673,10 @@ final class MenuEngine: ObservableObject {
             // Refresh only a still-readable authorized URL. Never substitute an ungranted path.
             do {
                 let fresh = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
-                UserDefaults.standard.set(fresh, forKey: bookmarkKey)
-                diagnostic["bookmarkRefreshed"] = true
+                if fresh != bookmark {
+                    UserDefaults.standard.set(fresh, forKey: bookmarkKey)
+                    diagnostic["bookmarkRefreshed"] = true
+                }
             } catch { diagnostic["refreshError"] = Self.errorDiagnostic(error) }
         }
         return url

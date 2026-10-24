@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 enum AppTheme: String, CaseIterable {
@@ -173,29 +174,35 @@ enum AppBrand {
 /// AppKit menus, alerts and windows inherit this appearance; SwiftUI uses the same preference.
 @MainActor
 final class ThemeController {
-    private var appearanceObservation: NSKeyValueObservation?
-    private var defaultsObservation: NSObjectProtocol?
+    private var appearanceObservation: AnyCancellable?
+    private var defaultsObservation: AnyCancellable?
+    private static var lastIconDark: Bool?
     func start() {
-        appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { _, _ in
-            Task { @MainActor in Self.updateIcon() }
-        }
-        defaultsObservation = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification,
-            object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.apply() } }
+        appearanceObservation = NSApp.publisher(for: \.effectiveAppearance, options: [.initial, .new])
+            .map(\.name).removeDuplicates().dropFirst().receive(on: DispatchQueue.main)
+            .sink { _ in Self.updateIcon() }
+        defaultsObservation = NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .map { _ in Self.preference }.prepend(Self.preference).removeDuplicates().dropFirst()
+            .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.apply() }
         apply()
     }
     func stop() {
         appearanceObservation = nil
-        if let defaultsObservation { NotificationCenter.default.removeObserver(defaultsObservation) }
         defaultsObservation = nil
     }
     private func apply() {
-        let manual = UserDefaults.standard.string(forKey: AppTheme.preferenceKey).flatMap(AppTheme.init(rawValue:))
+        let manual = Self.preference
         let desired = manual?.appearance
         if NSApp.appearance?.name != desired?.name { NSApp.appearance = desired }
         Self.updateIcon()
     }
+    private static var preference: AppTheme? {
+        UserDefaults.standard.string(forKey: AppTheme.preferenceKey).flatMap(AppTheme.init(rawValue:))
+    }
     private static func updateIcon() {
         let dark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        guard dark != lastIconDark else { return }
+        lastIconDark = dark
         NSApp.applicationIconImage = AppBrand.icon(dark ? .dark : .light)
     }
 }
