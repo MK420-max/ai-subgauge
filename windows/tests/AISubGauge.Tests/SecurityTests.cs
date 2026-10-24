@@ -1,181 +1,132 @@
-using System;
-using System.IO;
-using System.Security.AccessControl;
-using System.Security.Principal;
-using System.Text.Json;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
-using AISubGauge;
-using AISubGauge.Providers;
+using AISubGauge.Core;
 using AISubGauge.UI;
-using Xunit;
+using System.Windows.Forms;
+using System.Security.Cryptography.X509Certificates;
 
-namespace AISubGauge.Tests;
-
-public sealed class SecurityTests
+internal static partial class Program
 {
-    [Theory]
-    [InlineData(WellKnownSidType.WorldSid)]
-    [InlineData(WellKnownSidType.BuiltinUsersSid)]
-    [InlineData(WellKnownSidType.AuthenticatedUserSid)]
-    public async Task ReadableCredentialIsRejectedBeforeJsonParsing(WellKnownSidType kind)
+    private static void RunSecurityTests()
     {
-        string directory = Path.Combine(SettingsAndAutoStartTests.NewDirectory(), "private");
-        CredentialAccess.CreatePrivateDirectory(directory);
-        string path = Path.Combine(directory, "credential.json");
-        File.WriteAllText(path, "deliberately invalid JSON");
-        FileSecurity security = new FileInfo(path).GetAccessControl();
-        security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(kind, null), FileSystemRights.Read, AccessControlType.Allow));
-        new FileInfo(path).SetAccessControl(security);
-        QuotaReadException error = await Assert.ThrowsAsync<QuotaReadException>(async () =>
-        { using var json = await CredentialFiles.ReadAsync(path, CancellationToken.None); });
-        Assert.Equal(CredentialAccess.UnsafeMessage, error.Message);
-    }
-
-    [Fact]
-    public async Task PrivateCredentialIsReadableWithoutModification()
-    {
-        string directory = Path.Combine(SettingsAndAutoStartTests.NewDirectory(), "private");
-        CredentialAccess.CreatePrivateDirectory(directory);
-        string path = Path.Combine(directory, "credential.json");
-        File.WriteAllText(path, "{\"ok\":true}");
-        using var json = await CredentialFiles.ReadAsync(path, CancellationToken.None);
-        Assert.True(json.RootElement.GetProperty("ok").GetBoolean());
-        Assert.Equal("{\"ok\":true}", File.ReadAllText(path));
-    }
-
-    [Fact]
-    public async Task UnconsentedProviderNeverFetches()
-    {
-        var provider = new CountingProvider();
-        var settings = new AppSettings();
-        QuotaSnapshot result = await QuotaService.ReadProviderAsync(provider, false, CancellationToken.None, settings.HasConsent(provider.Id));
-        Assert.Equal(0, provider.FetchCount);
-        Assert.Equal(I18n.Get("windows.reading.local.login.information.has.not.been.allowed"), result.Error);
-        settings.ProviderConsent[provider.Id] = true;
-        await QuotaService.ReadProviderAsync(provider, false, CancellationToken.None, settings.HasConsent(provider.Id));
-        Assert.Equal(1, provider.FetchCount);
-        settings.ProviderConsent[provider.Id] = false;
-        await QuotaService.ReadProviderAsync(provider, false, CancellationToken.None, settings.HasConsent(provider.Id));
-        Assert.Equal(1, provider.FetchCount);
-    }
-
-    [Fact]
-    public async Task RefreshFailureFallsBackToClearlyLabelledDemoInPanelAndTooltip()
-    {
-        var provider = new CountingProvider();
-        var settings = new AppSettings();
-        settings.ProviderConsent[provider.Id] = true;
-        QuotaSnapshot result = await QuotaService.ReadProviderAsync(provider, false, CancellationToken.None, settings.HasConsent(provider.Id));
-        Assert.True(result.IsDemo);
-        Assert.Equal(CountingProvider.Error, QuotaText.Error(result.Error!));
-        Assert.Contains(CountingProvider.Error, QuotaText.Tooltip(provider.DisplayName, result));
-        Assert.Contains(I18n.Get("demo.label"), QuotaText.Tooltip(provider.DisplayName, result));
-        Assert.Contains(CountingProvider.Error, Diagnostics.Create(new[] { result }));
-    }
-
-    [Theory]
-    [InlineData("email user@example.org", "user@example.org")]
-    [InlineData(@"C:\Users\example\file.json", "example")]
-    [InlineData(@"C:\Users\example user\file.json", "example user")]
-    [InlineData("SSID=\"Private Network\"", "Private Network")]
-    [InlineData("{\"latitude\":49.2827,\"longitude\":-123.1207}", "49.2827")]
-    [InlineData("coordinates=[49.2827, -123.1207]", "-123.1207")]
-    [InlineData("Bearer sk-test-private123456789", "sk-test-private123456789")]
-    [InlineData("{\"access_token\":\"secret-value\"}", "secret-value")]
-    [InlineData("token=short-secret", "short-secret")]
-    [InlineData("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc12345", "eyJhbGci")]
-    [InlineData("host=WORKSTATION-42", "WORKSTATION-42")]
-    [InlineData("ghp_abcdefghijklmnopqrstuvwxyz123456", "abcdefghijklmnopqrstuvwxyz")]
-    public void DiagnosticsRemoveSensitiveText(string source, string secret)
-    {
-        string result = Diagnostics.Redact(source, "WORKSTATION-42");
-        Assert.DoesNotContain(secret, result);
-        Assert.Contains("<", result);
-    }
-
-    [Fact]
-    public void DiagnosticsIncludeProvidersWithoutASnapshot()
-    {
-        string text = Diagnostics.Create(Array.Empty<QuotaSnapshot>());
-        Assert.All(ProviderRegistry.CreateEnabled(), provider => Assert.Contains(provider.DisplayName, text));
-        Assert.Contains(I18n.Get("windows.hidden.or.not.refreshed.yet"), text);
-    }
-
-    [Fact]
-    public void DiagnosticsPreserveUsefulFacts() =>
-        Assert.Equal("AI SubGauge 1.2.0 · 72% · 刷新失败", Diagnostics.Redact("AI SubGauge 1.2.0 · 72% · 刷新失败", "TESTHOST"));
-
-    [Theory]
-    [InlineData(@".\grok.exe")]
-    [InlineData(@"\\server\share\grok.exe")]
-    [InlineData(@"C:\grok.cmd")]
-    public void GrokRejectsUntrustedExecutablePaths(string path) => Assert.ThrowsAny<Exception>(() =>
-    { using FileStream file = GrokCliRefresh.OpenExecutable(path); });
-
-    [Fact]
-    public void GrokEnvironmentDoesNotForwardProviderTokens()
-    {
-        const string variable = "CLAUDE_CODE_OAUTH_TOKEN";
-        string? saved = Environment.GetEnvironmentVariable(variable);
-        string? telemetry = Environment.GetEnvironmentVariable("GROK_TELEMETRY_ENABLED");
-        string? otel = Environment.GetEnvironmentVariable("GROK_EXTERNAL_OTEL");
-        try
+        RunTrustAndLockTests();
+        RunCodexVerificationTests();
+        Test("failing autostart registry leaves refresh and both timers running; Settings shows error", () =>
         {
-            Environment.SetEnvironmentVariable(variable, "sentinel-secret");
-            Environment.SetEnvironmentVariable("GROK_TELEMETRY_ENABLED", "1");
-            Environment.SetEnvironmentVariable("GROK_EXTERNAL_OTEL", "1");
-            var info = GrokCliRefresh.CreateStartInfo(@"C:\grok.exe", @"C:\test", @"C:\auth.json");
-            Assert.False(info.UseShellExecute);
-            Assert.False(info.Environment.ContainsKey(variable));
-            Assert.False(info.Environment.ContainsKey("AISUBGAUGE_TEST_GROK_CLI"));
-            Assert.Equal("NUL", info.Environment["GROK_LOG_FILE"]);
-            Assert.Equal("off", info.Environment["RUST_LOG"]);
-            Assert.Equal("0", info.Environment["GROK_TELEMETRY_ENABLED"]);
-            Assert.Equal("0", info.Environment["GROK_EXTERNAL_OTEL"]);
-            Assert.All(info.Environment.Keys, key => Assert.True(key is "GROK_LOG_FILE" or "RUST_LOG" or "GROK_TELEMETRY_ENABLED" or "GROK_EXTERNAL_OTEL" ||
-                Array.Exists(GrokCliRefresh.EnvironmentAllowlist, name => name.Equals(key, StringComparison.OrdinalIgnoreCase))));
-        }
-        finally
+            var messages = new List<string>();
+            using var app = new AISubGauge.UI.AppContext(Options.Parse(["--demo", "--autostart", "--lang", "en"]), new FailingRegistry(), new(new(), messages.Add));
+            Application.DoEvents();
+            Check(app.AutostartFailed); Check(app.TimersRunning); Check(app.Updated is not null);
+            Equal(messages.Single(), "AutostartFailed");
+            app.SettingsWindow.SelectPage(true);
+            var toggle = app.SettingsWindow.Controls.OfType<Toggle>().Single(t => t.AccessibleName == app.Text["Autostart"]);
+            Check(toggle.Error); Equal(toggle.AccessibleDescription, app.Text["AutostartFailed"]);
+            app.RefreshAsync().GetAwaiter().GetResult(); Check(app.TimersRunning);
+        });
+        Test("autostart failure clears after successful retry, including disable failures", () =>
         {
-            Environment.SetEnvironmentVariable(variable, saved);
-            Environment.SetEnvironmentVariable("GROK_TELEMETRY_ENABLED", telemetry);
-            Environment.SetEnvironmentVariable("GROK_EXTERNAL_OTEL", otel);
+            var registry = new FailingRegistry(); var messages = new List<string>();
+            var state = new AutostartState(registry, new(new(), messages.Add));
+            state.Apply(false, "test.exe"); Check(state.Failed);
+            registry.Fail = false; state.Apply(false, "test.exe"); Check(!state.Failed);
+            Equal(messages.Single(), "AutostartFailed");
+        });
+        Test("diagnostic sink failure cannot break startup or cleanup", () =>
+        {
+            var log = new SafeLog(new(), _ => throw new IOException(Secret));
+            var state = new AutostartState(new FailingRegistry(), log);
+            state.Apply(true, "test.exe"); Check(state.Failed);
+            RefreshCleanup.TryDelete("unused", log, _ => throw new IOException(Secret));
+        });
+        Test("refresh cleanup failure logs only fixed status", () =>
+        {
+            var messages = new List<string>();
+            RefreshCleanup.TryDelete("sensitive-path", new(new(), messages.Add), _ => throw new IOException(Secret));
+            Equal(messages.Single(), "RefreshCleanupFailed");
+        });
+        var locations = new CliLocations(@"C:\Fixture\Local", @"C:\Fixture\Roaming", @"C:\Fixture\Profile");
+        string known = Path.Combine(locations.Local, "OpenAI", "Codex", "bin", "abcdef123456", "codex.exe");
+        string grok = Path.Combine(locations.Profile, ".grok", "bin", "grok.exe");
+        Test("Codex accepts signed known location and retains file lease until launch", () =>
+        {
+            var files = new FakeExecutableFiles(known); var verifier = new FakeSignatures(SignedFixture("O=\"OpenAI OpCo, LLC\""));
+            var resolver = new ExecutableResolver(files, verifier, locations);
+            using (var exe = resolver.Resolve("codex")) { Equal(exe.Path, known); Check(!exe.Custom); Check(files.LastLease!.CanRead); }
+            Check(!files.LastLease!.CanRead); Equal(verifier.Calls, 1);
+        });
+        Test("Codex rejects invalid signatures and signed files from another publisher", () =>
+        {
+            foreach (var signature in new[] { new ExecutableSignature(SignatureStatus.Invalid), SignedFixture("CN=Other") })
+            {
+                var files = new FakeExecutableFiles(known);
+                Throws(() => new ExecutableResolver(files, new FakeSignatures(signature), locations).Resolve("codex"));
+                Check(!files.LastLease!.CanRead);
+            }
+        });
+        Test("Codex overrides require valid OpenAI signature and expose custom-path flag", () =>
+        {
+            const string custom = @"C:\Fixture\Custom\codex.exe";
+            foreach (var signature in new[] { new ExecutableSignature(SignatureStatus.Unsigned), new ExecutableSignature(SignatureStatus.Invalid), SignedFixture("CN=Other") })
+                Throws(() => new ExecutableResolver(new FakeExecutableFiles(custom), new FakeSignatures(signature), locations).Resolve("codex", custom));
+            using var exe = new ExecutableResolver(new FakeExecutableFiles(custom), new FakeSignatures(SignedFixture("CN=OpenAI, O=\"OpenAI OpCo, LLC\"")), locations).Resolve("codex", custom);
+            Check(exe.Custom); Equal(exe.Path, custom);
+        });
+        Test("Codex ignores PATH and candidates outside known locations, including traversal", () =>
+        {
+            foreach (string untrusted in new[] { @"C:\Fixture\Untrusted\codex.exe", Path.Combine(locations.Local, "OpenAI", "Codex", "bin", "..", "outside", "codex.exe"), Path.Combine(locations.Local, "OpenAI", "Codex", "bin", "not-a-hash", "codex.exe") })
+            {
+                var files = new FakeExecutableFiles(untrusted);
+                Throws(() => new ExecutableResolver(files, new FakeSignatures(SignedFixture("O=\"OpenAI OpCo, LLC\"")), locations).Resolve("codex"));
+                Check(!files.Opened.Contains(untrusted));
+            }
+        });
+        Test("Codex supports official npm global native package paths", () =>
+        {
+            string path = Path.Combine(locations.Roaming, "npm", "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "codex", "codex.exe");
+            using var exe = new ExecutableResolver(new FakeExecutableFiles(path), new FakeSignatures(new(SignatureStatus.Unsigned)), locations).Resolve("codex", allowUnsignedCodexNpm: true);
+            Equal(exe.Path, path); Check(exe.Unsigned);
+        });
+        Test("Grok overrides stay in known locations and expose custom-path flag", () =>
+        {
+            var resolver = new ExecutableResolver(new FakeExecutableFiles(grok), new FakeSignatures(new(SignatureStatus.Unsigned)), locations);
+            using var standard = resolver.Resolve("grok"); Check(!standard.Custom);
+            using var custom = resolver.Resolve("grok", grok); Check(custom.Custom);
+            Throws(() => resolver.Resolve("grok", @"C:\Fixture\Untrusted\grok.exe"));
+        });
+        Test("unsafe file open or verifier errors fail closed without leaking details", () =>
+        {
+            var files = new FakeExecutableFiles(known) { FailOpen = true };
+            Throws(() => new ExecutableResolver(files, new FakeSignatures(new(SignatureStatus.Unsigned)), locations).Resolve("codex"));
+            files.FailOpen = false;
+            Throws(() => new ExecutableResolver(files, new FakeSignatures(new(SignatureStatus.Unsigned)) { Fail = true }, locations).Resolve("codex"));
+            Check(!files.LastLease!.CanRead);
+        });
+        Test("native WinVerifyTrust recognizes unsigned build assembly without executing it", () =>
+        {
+            Equal(new AuthenticodeSignatures().Verify(typeof(Startup).Assembly.Location).Status, SignatureStatus.Unsigned);
+        });
+    }
+    private sealed class FailingRegistry : IRunRegistry
+    {
+        public bool Fail { get; set; } = true;
+        public void Set(string name, string value) { if (Fail) throw new UnauthorizedAccessException(Secret); }
+        public void Remove(string name) { if (Fail) throw new UnauthorizedAccessException(Secret); }
+    }
+    private sealed class FakeExecutableFiles(params string[] paths) : IExecutableFiles
+    {
+        public bool FailOpen { get; set; }
+        public MemoryStream? LastLease { get; private set; }
+        public List<string> Opened { get; } = [];
+        public IEnumerable<string> Directories(string path) => paths.Select(p => Path.GetDirectoryName(p)!);
+        public Stream OpenRead(string path)
+        {
+            Opened.Add(path);
+            if (FailOpen || !paths.Contains(path)) throw new IOException(Secret);
+            return LastLease = new MemoryStream();
         }
     }
-
-    [Fact]
-    public void StatusSerializesOnlySafeFieldsAndRedactsErrors()
+    private sealed class FakeSignatures(ExecutableSignature signature) : IExecutableSignatures
     {
-        const string secret = "sk-test-SENTINEL-DO-NOT-EXPOSE-1234567890";
-        var provider = new CountingProvider();
-        var snapshot = new QuotaSnapshot
-        {
-            Provider = provider, Plan = secret, Info = secret, Error = "Bearer " + secret,
-            IsDemo = true, Windows = new List<QuotaWindow>
-            { new() { Id = "test", Title = secret, RemainingPercent = 55 } }
-        };
-        string json = JsonSerializer.Serialize(StatusReport.CreateEntry("grok", true, false, snapshot));
-        Assert.DoesNotContain(secret, json);
-        using JsonDocument document = JsonDocument.Parse(json);
-        Assert.False(document.RootElement.GetProperty("consent").GetBoolean());
-        Assert.False(document.RootElement.GetProperty("isRealData").GetBoolean());
-        Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("remainingPercent").ValueKind);
-        Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("updatedAt").ValueKind);
-        Assert.False(document.RootElement.TryGetProperty("Plan", out _));
-        Assert.DoesNotContain(secret, Diagnostics.Create(new[] { snapshot }));
-    }
-
-    private sealed class CountingProvider : IQuotaProvider
-    {
-        public static string Error => GrokCliRefresh.FailurePrefix + I18n.Get("windows.the.official.cli.signature.is.invalid.execution.refused");
-        public int FetchCount { get; private set; }
-        public string Id => "grok";
-        public string DisplayName => "Grok Bot";
-        public string LogoResource => "";
-        public bool IsSignedInLocally() => true;
-        public Task<QuotaSnapshot> FetchAsync(CancellationToken cancellationToken)
-        { FetchCount++; return Task.FromResult(QuotaSnapshot.Failure(this, Error)); }
+        public bool Fail { get; init; }
+        public int Calls { get; private set; }
+        public ExecutableSignature Verify(string path) { Calls++; return Fail ? throw new IOException(Secret) : signature; }
     }
 }

@@ -1,0 +1,199 @@
+<root>
+  <data name="AppTitle" xml:space="preserve">
+    <value>AI SubGauge</value>
+  </data>
+  <data name="Remaining" xml:space="preserve">
+    <value>Remaining quota</value>
+  </data>
+  <data name="Windows" xml:space="preserve">
+    <value>5 hours / Weekly</value>
+  </data>
+  <data name="FiveHour" xml:space="preserve">
+    <value>5 hours</value>
+  </data>
+  <data name="Weekly" xml:space="preserve">
+    <value>Weekly</value>
+  </data>
+  <data name="Refresh" xml:space="preserve">
+    <value>Refresh</value>
+  </data>
+  <data name="RefreshNow" xml:space="preserve">
+    <value>Refresh now</value>
+  </data>
+  <data name="Refreshing" xml:space="preserve">
+    <value>Refreshing…</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>Settings</value>
+  </data>
+  <data name="Exit" xml:space="preserve">
+    <value>Quit</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>Close</value>
+  </data>
+  <data name="Subscriptions" xml:space="preserve">
+    <value>AI subscriptions</value>
+  </data>
+  <data name="General" xml:space="preserve">
+    <value>General</value>
+  </data>
+  <data name="SubsDescription" xml:space="preserve">
+    <value>View quota and reset times; choose subscriptions for the tray.</value>
+  </data>
+  <data name="GeneralDescription" xml:space="preserve">
+    <value>Choose language, appearance and startup behavior.</value>
+  </data>
+  <data name="TrayShow" xml:space="preserve">
+    <value>Show in tray</value>
+  </data>
+  <data name="Language" xml:space="preserve">
+    <value>Language</value>
+  </data>
+  <data name="Theme" xml:space="preserve">
+    <value>Theme</value>
+  </data>
+  <data name="FollowSystem" xml:space="preserve">
+    <value>Follow system</value>
+  </data>
+  <data name="Chinese" xml:space="preserve">
+    <value>简体中文</value>
+  </data>
+  <data name="English" xml:space="preserve">
+    <value>English</value>
+  </data>
+  <data name="Light" xml:space="preserve">
+    <value>Light</value>
+  </data>
+  <data name="Dark" xml:space="preserve">
+    <value>Dark</value>
+  </data>
+  <data name="AlwaysShow" xml:space="preserve">
+    <value>Always show</value>
+  </data>
+  <data name="AlwaysHint" xml:space="preserve">
+    <value>When off, hide inactive AI apps after a 30-second grace period.</value>
+  </data>
+  <data name="Autostart" xml:space="preserve">
+    <value>Launch at sign-in</value>
+  </data>
+  <data name="AutostartHint" xml:space="preserve">
+    <value>Start AI SubGauge 2 when you sign in to Windows.</value>
+  </data>
+  <data name="ResetHours" xml:space="preserve">
+    <value>Resets in {0} hours</value>
+  </data>
+  <data name="ResetMinutes" xml:space="preserve">
+    <value>Resets in {0} minutes</value>
+  </data>
+  <data name="ResetNow" xml:space="preserve">
+    <value>Reset due</value>
+  </data>
+  <data name="ResetUnknown" xml:space="preserve">
+    <value>Reset time unavailable</value>
+  </data>
+  <data name="Updated" xml:space="preserve">
+    <value>Updated at {0}</value>
+  </data>
+  <data name="NotUpdated" xml:space="preserve">
+    <value>Not updated yet</value>
+  </data>
+  <data name="Connected" xml:space="preserve">
+    <value>Connected · {0} remaining</value>
+  </data>
+  <data name="Empty" xml:space="preserve">
+    <value>No running AI detected. Enable Always show in Settings.</value>
+  </data>
+  <data name="Demo" xml:space="preserve">
+    <value>Demo data</value>
+  </data>
+  <data name="FaultNone" xml:space="preserve">
+    <value>Connected</value>
+  </data>
+  <data name="FaultSignIn" xml:space="preserve">
+    <value>Sign in to the corresponding app</value>
+  </data>
+  <data name="FaultNetwork" xml:space="preserve">
+    <value>Connection failed; try refreshing later</value>
+  </data>
+  <data name="FaultInvalidData" xml:space="preserve">
+    <value>Quota data is unavailable</value>
+  </data>
+  <data name="FaultRefreshFailed" xml:space="preserve">
+    <value>Refresh failed; sign in to Grok CLI again</value>
+  </data>
+  <data name="FaultTimeout" xml:space="preserve">
+    <value>Request timed out; try again later</value>
+  </data>
+  <data name="FaultCacheExpired" xml:space="preserve">
+    <value>Cache expired; refresh usage in Grok Bot</value>
+  </data>
+  <data name="FaultNotAvailable" xml:space="preserve">
+    <value>Quota has not been loaded</value>
+  </data>
+  <data name="SaveFailed" xml:space="preserve">
+    <value>Could not save settings. Check file permissions.</value>
+  </data>
+  <data name="StartupFailed" xml:space="preserve">
+    <value>Could not start. Check settings folder permissions.</value>
+  </data>
+  <data name="ScreenshotFailed" xml:space="preserve">
+    <value>Capture failed. Check the desktop session and output folder.</value>
+  </data>
+  <data name="InvalidArguments" xml:space="preserve">
+    <value>Invalid command-line options. See README.</value>
+  </data>
+  <data name="AlreadyRunning" xml:space="preserve">
+    <value>AI SubGauge 2 is already running.</value>
+  </data>
+  <data name="Codex" xml:space="preserve">
+    <value>Codex</value>
+  </data>
+  <data name="Claude" xml:space="preserve">
+    <value>Claude</value>
+  </data>
+  <data name="Grok" xml:space="preserve">
+    <value>Grok Bot</value>
+  </data>
+  <data name="PlanUnknown" xml:space="preserve">
+    <value>Unknown plan</value>
+  </data>
+  <data name="PlanPlus" xml:space="preserve">
+    <value>Plus</value>
+  </data>
+  <data name="PlanPro" xml:space="preserve">
+    <value>Pro</value>
+  </data>
+  <data name="PlanMax" xml:space="preserve">
+    <value>Max</value>
+  </data>
+  <data name="PlanSuperGrok" xml:space="preserve">
+    <value>SuperGrok</value>
+  </data>
+  <data name="PlanSuperGrokHeavy" xml:space="preserve">
+    <value>SuperGrok Heavy</value>
+  </data>
+  <data name="PlanTeam" xml:space="preserve">
+    <value>Team</value>
+  </data>
+  <data name="PlanEnterprise" xml:space="preserve">
+    <value>Enterprise</value>
+  </data>
+  <data name="PlanFree" xml:space="preserve">
+    <value>Free</value>
+  </data>
+  <data name="ResetHour" xml:space="preserve">
+    <value>Resets in 1 hour</value>
+  </data>
+  <data name="ResetMinute" xml:space="preserve">
+    <value>Resets in 1 minute</value>
+  </data>
+<data name="AutostartFailed" xml:space="preserve"><value>Autostart could not be updated. Toggle again to retry.</value></data>
+<data name="CustomCodexPath" xml:space="preserve"><value>Custom Codex path in use</value></data>
+<data name="CustomGrokPath" xml:space="preserve"><value>Custom Grok path in use</value></data>
+<data name="AllowUnsignedCodexNpm" xml:space="preserve"><value>Allow unsigned Codex CLI (npm)</value></data>
+<data name="Unsigned" xml:space="preserve"><value>Unsigned</value></data>
+<data name="FaultVerificationFailed" xml:space="preserve"><value>CLI verification failed.</value></data>
+<data name="FaultVerifierUnresponsive" xml:space="preserve"><value>Signature check is not responding. Please restart AI SubGauge.</value></data>
+<data name="ShowTrayPercentage" xml:space="preserve"><value>Show percentage in tray</value></data>
+</root>
