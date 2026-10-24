@@ -353,6 +353,7 @@ extension TidyBarTests.GrokBuildUsageTests {
         printf '%s\\n' '{"jsonrpc":"2.0","id":2,"error":{"message":"synthetic-error-secret","token":"synthetic-ignored"}}'
         """
         let (cli, file, expired) = try renewalFixture(script: script)
+        defer { try? FileManager.default.removeItem(at: cli.deletingLastPathComponent()) }
         let events = RenewalObservations()
         let store = AIUsageStore(applyDisplayFilters: false, fetcher: { _ in
             _ = try await GrokBuildUsageSource.refreshCredential(executable: cli, authURL: file, expected: expired,
@@ -453,7 +454,7 @@ extension TidyBarTests.GrokBuildUsageTests {
         let calls = RenewalObservations()
         let url = URL(fileURLWithPath: "/tmp/synthetic-renewal-" + UUID().uuidString)
         let credential = try #require(try GrokBuildUsageSource.credential(from: data(scoped(auth())), now: now))
-        let operation: () async throws -> GrokBuildUsageSource.Credential = {
+        let operation: GrokCredentialRenewals.Operation = { _ in
             calls.launched()
             _ = await release.wait(timeout: 5)
             try Task.checkCancellation()
@@ -492,7 +493,7 @@ extension TidyBarTests.GrokBuildUsageTests {
         let renewals = GrokCredentialRenewals(), cancelled = TestSignal(), cleanup = TestSignal()
         let calls = RenewalObservations()
         let url = URL(fileURLWithPath: "/tmp/synthetic-renewal-" + UUID().uuidString)
-        let operation: () async throws -> GrokBuildUsageSource.Credential = {
+        let operation: GrokCredentialRenewals.Operation = { _ in
             calls.launched()
             do { try await Task.sleep(nanoseconds: 10_000_000_000) }
             catch {
@@ -528,10 +529,12 @@ extension TidyBarTests.GrokBuildUsageTests {
     }
 
     @Test func finalWaiterCancellationReturnsWithinCleanupDeadline() async throws {
-        let renewals = GrokCredentialRenewals(), cancelled = TestSignal(), cleanup = TestSignal()
+        let restored = TestSignal()
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 100_000_000, restore: { _ in restored.signal() })
+        let cancelled = TestSignal(), cleanup = TestSignal()
         let url = URL(fileURLWithPath: "/tmp/synthetic-renewal-" + UUID().uuidString)
         let task = Task {
-            try await renewals.refresh(at: url) {
+            try await renewals.refresh(at: url) { _ in
                 do { try await Task.sleep(nanoseconds: 10_000_000_000) }
                 catch {
                     cancelled.signal()
@@ -543,18 +546,32 @@ extension TidyBarTests.GrokBuildUsageTests {
         }
         defer { cleanup.signal(); task.cancel() }
         try await waitForWaiters(1, at: url, in: renewals)
-        let start = ProcessInfo.processInfo.systemUptime
+        let entry = try #require(await renewals.pending[url])
         task.cancel()
         #expect(await cancelled.wait(timeout: 1))
-        do { _ = try await task.value; Issue.record("Cancelled waiter must throw") }
+        do { _ = try await boundedResult(task); Issue.record("Cancelled waiter must throw") }
         catch is CancellationError {}
-        let elapsed = ProcessInfo.processInfo.systemUptime - start
-        #expect(elapsed >= 2 && elapsed < 5)
-        let entry = try #require(await renewals.pending[url])
-        #expect(entry.waiters.isEmpty && entry.cancellations.isEmpty)
+        #expect(await restored.wait(timeout: 2))
         cleanup.signal()
         await entry.task.value
+        try await waitForNoPending(at: url, in: renewals)
         #expect(await renewals.pending[url] == nil)
+    }
+
+    private func waitForNoPending(at url: URL, in renewals: GrokCredentialRenewals) async throws {
+        for _ in 0..<1000 {
+            if await renewals.pending[url] == nil { return }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        throw AIUsageError.timeout
+    }
+
+    private func waitForCleanupFailure(at url: URL, in renewals: GrokCredentialRenewals) async throws {
+        for _ in 0..<1000 {
+            if await renewals.pending[url]?.cleanupError != nil { return }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        throw AIUsageError.timeout
     }
 
     private func waitForQueued(_ count: Int, at url: URL, in renewals: GrokCredentialRenewals) async throws {
@@ -579,18 +596,20 @@ extension TidyBarTests.GrokBuildUsageTests {
 
     private func beginCancelledRenewal(at url: URL, in renewals: GrokCredentialRenewals,
         cleanup: RenewalGate, calls: RenewalObservations = RenewalObservations(),
-        onCleanup: @escaping () throws -> Void = {}
+        onStart: @escaping (GrokRenewalEpoch) throws -> Void = { _ in },
+        onCleanup: @escaping (GrokRenewalEpoch) throws -> Void = { _ in }
     ) async throws -> Task<GrokBuildUsageSource.Credential, Error> {
         let started = TestSignal(), cancelled = TestSignal()
         let task = Task {
-            try await renewals.refresh(at: url) {
+            try await renewals.refresh(at: url) { epoch in
+                try onStart(epoch)
                 calls.launched()
                 started.signal()
                 do { try await Task.sleep(nanoseconds: 10_000_000_000) }
                 catch {
                     cancelled.signal()
                     await cleanup.wait()
-                    try onCleanup()
+                    try onCleanup(epoch)
                     throw error
                 }
                 throw AIUsageError.invalidResponse
@@ -608,25 +627,17 @@ extension TidyBarTests.GrokBuildUsageTests {
         }
     }
 
-    @Test(arguments: [false, true])
-    func newCallerDuringCleanupRunsFreshOperation(exceedsDeadline: Bool) async throws {
-        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: exceedsDeadline ? 100_000_000 : 3_000_000_000)
+    @Test func newCallerDuringCleanupRunsFreshOperation() async throws {
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 60_000_000_000)
         let cleanup = RenewalGate(), calls = RenewalObservations()
-        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent(".build/grok-cleanup-" + UUID().uuidString)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let file = folder.appendingPathComponent("synthetic-store")
-        try Data().write(to: file)
-        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
-        let started = ProcessInfo.processInfo.systemUptime
-        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup, calls: calls) {
-            try CredentialFiles.restrictAfterRenewal(at: file)
-        }
-        let oldEntry = try #require(await renewals.pending[file])
+        let file = try syntheticStore()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup, calls: calls, onCleanup: { epoch in
+            try epoch.withCurrent { try CredentialFiles.restrictAfterRenewal(at: file) }
+        })
         let fresh = try #require(try GrokBuildUsageSource.credential(from: data(scoped(auth())), now: now))
         let next = Task {
-            try await renewals.refresh(at: file) {
+            try await renewals.refresh(at: file) { _ in
                 calls.launched()
                 let permissions = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int
                 #expect(permissions == 0o600)
@@ -636,16 +647,6 @@ extension TidyBarTests.GrokBuildUsageTests {
         defer { cleanup.open(); original.cancel(); next.cancel() }
         try await waitForQueued(1, at: file, in: renewals)
         #expect(calls.count == 1)
-        if exceedsDeadline {
-            do { _ = try await boundedResult(original); Issue.record("Original waiter must be cancelled") }
-            catch is CancellationError {}
-            let elapsed = ProcessInfo.processInfo.systemUptime - started
-            #expect(elapsed >= 0.09 && elapsed < 2)
-            #expect(await renewals.pending[file]?.id == oldEntry.id)
-            #expect(await renewals.pending[file]?.cancellations.isEmpty == true)
-            #expect(await renewals.pending[file]?.queued.count == 1)
-            #expect(calls.count == 1)
-        }
         cleanup.open()
         do { _ = try await boundedResult(original); Issue.record("Original waiter must be cancelled") }
         catch is CancellationError {}
@@ -666,7 +667,7 @@ extension TidyBarTests.GrokBuildUsageTests {
         let original = try await beginCancelledRenewal(at: url, in: renewals, cleanup: cleanup)
         let fresh = try #require(try GrokBuildUsageSource.credential(from: data(scoped(auth())), now: now))
         let cancelled = Task {
-            try await renewals.refresh(at: url) { calls.launched(); return fresh }
+            try await renewals.refresh(at: url) { _ in calls.launched(); return fresh }
         }
         defer { cleanup.open(); original.cancel(); cancelled.cancel() }
         try await waitForQueued(1, at: url, in: renewals)
@@ -675,7 +676,7 @@ extension TidyBarTests.GrokBuildUsageTests {
         catch is CancellationError {}
         #expect(await renewals.pending[url]?.queued.isEmpty == true)
         #expect(calls.count == 0)
-        let next = Task { try await renewals.refresh(at: url) { calls.launched(); return fresh } }
+        let next = Task { try await renewals.refresh(at: url) { _ in calls.launched(); return fresh } }
         defer { next.cancel() }
         try await waitForQueued(1, at: url, in: renewals)
         cleanup.open()
@@ -692,7 +693,7 @@ extension TidyBarTests.GrokBuildUsageTests {
         let url = URL(fileURLWithPath: "/tmp/synthetic-renewal-" + UUID().uuidString)
         let original = try await beginCancelledRenewal(at: url, in: renewals, cleanup: cleanup)
         let fresh = try #require(try GrokBuildUsageSource.credential(from: data(scoped(auth())), now: now))
-        let operation: () async throws -> GrokBuildUsageSource.Credential = {
+        let operation: GrokCredentialRenewals.Operation = { _ in
             calls.launched()
             await release.wait()
             return fresh
@@ -713,27 +714,754 @@ extension TidyBarTests.GrokBuildUsageTests {
         #expect(await renewals.pending[url] == nil)
     }
 
-    @Test func newCallerDuringStuckCleanupTimesOutWithoutStartingAnOverlappingRenewal() async throws {
-        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 10_000_000, cleanupWaitTimeout: 100_000_000)
-        let cleanup = RenewalGate(), calls = RenewalObservations()
-        let url = URL(fileURLWithPath: "/tmp/synthetic-renewal-" + UUID().uuidString)
-        let original = try await beginCancelledRenewal(at: url, in: renewals, cleanup: cleanup)
+    @Test func stuckCleanupForceStopsRecordedChildRestoresPermissionsAndStartsFreshRenewal() async throws {
+        let file = try syntheticStore()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 100_000_000)
+        let cleanup = RenewalGate(), calls = RenewalObservations(), stops = RenewalObservations()
+        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup, calls: calls,
+            onStart: { epoch in
+                let pid = try epoch.launch {
+                    GrokRenewalEpoch.Child(pid: 424242, stop: { pid in
+                        #expect(pid == 424242) // Fake hook: never signal an actual process.
+                        stops.launched()
+                    }, cleanup: { Issue.record("Abandoned child must not be cleaned twice") })
+                }
+                #expect(pid == 424242)
+            })
+        let oldEntry = try #require(await renewals.pending[file])
         let fresh = try #require(try GrokBuildUsageSource.credential(from: data(scoped(auth())), now: now))
-        let next = Task { try await renewals.refresh(at: url) { calls.launched(); return fresh } }
+        let next = Task {
+            try await renewals.refresh(at: file) { epoch in
+                calls.launched()
+                #expect(stops.count == 1)
+                #expect(try self.permissions(file) == 0o600)
+                try epoch.withCurrent {
+                    try Data("fresh synthetic store".utf8).write(to: file)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+                }
+                try epoch.finish(at: file)
+                return fresh
+            }
+        }
         defer { cleanup.open(); original.cancel(); next.cancel() }
-        do { _ = try await boundedResult(next); Issue.record("Stuck cleanup must time out queued callers") }
-        catch AIUsageError.timeout {}
-        #expect(calls.count == 0)
-        #expect(await renewals.pending[url]?.queued.isEmpty == true)
-        let oldEntry = try #require(await renewals.pending[url])
-        cleanup.open()
-        await oldEntry.task.value
-        let later = Task { try await renewals.refresh(at: url) { calls.launched(); return fresh } }
-        defer { later.cancel() }
-        _ = try await boundedResult(later)
+        try await waitForQueued(1, at: file, in: renewals)
+        _ = try await boundedResult(next, timeout: 1)
         do { _ = try await boundedResult(original); Issue.record("Original waiter must be cancelled") }
         catch is CancellationError {}
+        #expect(calls.count == 2 && stops.count == 1)
+        #expect(try permissions(file) == 0o600)
+        cleanup.open()
+        await oldEntry.task.value
+        #expect(await renewals.pending[file] == nil)
+        let later = Task { try await renewals.refresh(at: file) { _ in fresh } }
+        _ = try await boundedResult(later)
+    }
+
+    @Test func abandonedWorkerCannotWriteOrLaunchLateOrClobberFreshEntry() async throws {
+        let file = try syntheticStore()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 100_000_000)
+        let cleanup = RenewalGate(), release = RenewalGate(), freshStarted = TestSignal()
+        let rejected = RenewalObservations(), freshWritesFinished = TestSignal()
+        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup, onCleanup: { epoch in
+            #expect(throws: CancellationError.self) {
+                try epoch.withCurrent { try Data("stale write".utf8).write(to: file) }
+            }
+            #expect(throws: CancellationError.self) {
+                try epoch.launch {
+                    Issue.record("Stale worker must not launch another writer")
+                    return GrokRenewalEpoch.Child(pid: 424243, stop: { _ in }, cleanup: {})
+                }
+            }
+            #expect(throws: CancellationError.self) { try epoch.finish(at: file) }
+            rejected.launched()
+        })
+        let oldEntry = try #require(await renewals.pending[file])
+        let fresh = try #require(try GrokBuildUsageSource.credential(from: data(scoped(auth())), now: now))
+        let next = Task {
+            try await renewals.refresh(at: file) { epoch in
+                let writer = Task.detached {
+                    try epoch.withCurrent {
+                        let deadline = ProcessInfo.processInfo.systemUptime + 5
+                        repeat {
+                            try Data("fresh write".utf8).write(to: file)
+                            freshStarted.signal()
+                            usleep(1_000)
+                        } while rejected.count == 0 && ProcessInfo.processInfo.systemUptime < deadline
+                        #expect(rejected.count == 1)
+                    }
+                }
+                try await writer.value
+                freshWritesFinished.signal()
+                await release.wait()
+                try epoch.finish(at: file)
+                return fresh
+            }
+        }
+        defer { if rejected.count == 0 { rejected.launched() }; cleanup.open(); release.open(); original.cancel(); next.cancel() }
+        try #require(await freshStarted.wait(timeout: 1))
+        let newID = try #require(await renewals.pending[file]?.id)
+        #expect(newID != oldEntry.id)
+        cleanup.open()
+        await oldEntry.task.value
+        #expect(rejected.count == 1)
+        try #require(await freshWritesFinished.wait(timeout: 2))
+        #expect(try Data(contentsOf: file) == Data("fresh write".utf8))
+        #expect(await renewals.pending[file]?.id == newID)
+        #expect(await renewals.pending[file]?.waiters.count == 1)
+        release.open()
+        _ = try await boundedResult(next)
+        do { _ = try await boundedResult(original); Issue.record("Original waiter must be cancelled") }
+        catch is CancellationError {}
+        #expect(await renewals.pending[file] == nil)
+        #expect(try permissions(file) == 0o600)
+    }
+
+    @Test func forceRestoreFailureFailsQueuedAndLaterCallersWithoutStartingRenewal() async throws {
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 100_000_000,
+            restore: { _ in throw AIUsageError.invalidResponse })
+        let cleanup = RenewalGate(), calls = RenewalObservations()
+        let url = try syntheticStore()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let original = try await beginCancelledRenewal(at: url, in: renewals, cleanup: cleanup)
+        let oldEntry = try #require(await renewals.pending[url])
+        let operation: GrokCredentialRenewals.Operation = { _ in
+            calls.launched()
+            throw AIUsageError.timeout
+        }
+        let first = Task { try await renewals.refresh(at: url, operation: operation) }
+        let second = Task { try await renewals.refresh(at: url, operation: operation) }
+        defer { cleanup.open(); original.cancel(); first.cancel(); second.cancel() }
+        try await waitForQueued(2, at: url, in: renewals)
+        for caller in [first, second] {
+            do { _ = try await boundedResult(caller, timeout: 1); Issue.record("Restore failure must be returned") }
+            catch AIUsageError.invalidResponse {}
+        }
+        cleanup.open()
+        await oldEntry.task.value
+        let later = Task { try await renewals.refresh(at: url, operation: operation) }
+        do { _ = try await boundedResult(later); Issue.record("Unsafe store must remain blocked") }
+        catch AIUsageError.invalidResponse {}
+        do { _ = try await boundedResult(original); Issue.record("Original waiter must be cancelled") }
+        catch is CancellationError {}
+        #expect(calls.count == 0)
+        #expect(await renewals.pending[url]?.cleanupError != nil)
+        #expect(await renewals.pending[url]?.queued.isEmpty == true)
+    }
+
+    @Test func failedChildStopDoesNotRestorePermissionsOrStartFreshRenewal() async throws {
+        let file = try syntheticStore()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 100_000_000)
+        let cleanup = RenewalGate(), calls = RenewalObservations()
+        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup, onStart: { epoch in
+            _ = try epoch.launch {
+                GrokRenewalEpoch.Child(pid: 424244, stop: { _ in throw AIUsageError.timeout }, cleanup: {})
+            }
+        })
+        let oldEntry = try #require(await renewals.pending[file])
+        let next = Task {
+            try await renewals.refresh(at: file) { _ in calls.launched(); throw AIUsageError.invalidResponse }
+        }
+        defer { cleanup.open(); original.cancel(); next.cancel() }
+        do { _ = try await boundedResult(next); Issue.record("Unconfirmed child exit must block the next writer") }
+        catch AIUsageError.timeout {}
+        #expect(calls.count == 0)
+        #expect(try permissions(file) == 0o644)
+        cleanup.open()
+        await oldEntry.task.value
+        #expect(try permissions(file) == 0o644)
+        do { _ = try await boundedResult(original); Issue.record("Original waiter must be cancelled") }
+        catch is CancellationError {}
+    }
+
+    @Test func multipleQueuedCallersShareFreshRenewalAfterForceStop() async throws {
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 100_000_000, restore: { _ in })
+        let cleanup = RenewalGate(), release = RenewalGate(), started = TestSignal()
+        let calls = RenewalObservations()
+        let url = try syntheticStore()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let original = try await beginCancelledRenewal(at: url, in: renewals, cleanup: cleanup)
+        let oldEntry = try #require(await renewals.pending[url])
+        let fresh = try #require(try GrokBuildUsageSource.credential(from: data(scoped(auth())), now: now))
+        let operation: GrokCredentialRenewals.Operation = { _ in
+            calls.launched()
+            started.signal()
+            await release.wait()
+            return fresh
+        }
+        let first = Task { try await renewals.refresh(at: url, operation: operation) }
+        let second = Task { try await renewals.refresh(at: url, operation: operation) }
+        let cancelled = Task { try await renewals.refresh(at: url, operation: operation) }
+        defer { cleanup.open(); release.open(); original.cancel(); first.cancel(); second.cancel(); cancelled.cancel() }
+        try await waitForQueued(3, at: url, in: renewals)
+        cancelled.cancel()
+        do { _ = try await boundedResult(cancelled); Issue.record("Queued caller must be cancelled") }
+        catch is CancellationError {}
+        try #require(await started.wait(timeout: 1))
+        try await waitForWaiters(2, at: url, in: renewals)
+        let later = Task { try await renewals.refresh(at: url, operation: operation) }
+        defer { later.cancel() }
+        try await waitForWaiters(3, at: url, in: renewals)
+        cleanup.open()
+        await oldEntry.task.value
+        #expect(await renewals.pending[url]?.waiters.count == 3)
+        #expect(calls.count == 1)
+        release.open()
+        for caller in [first, second, later] { _ = try await boundedResult(caller) }
+        do { _ = try await boundedResult(original); Issue.record("Original waiter must be cancelled") }
+        catch is CancellationError {}
+        #expect(await renewals.pending[url] == nil)
+    }
+
+    @Test func queuedCallersCanCancelWhileForcedChildStopIsInProgress() async throws {
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 100_000_000, restore: { _ in })
+        let cleanup = RenewalGate(), stopping = TestSignal(), calls = RenewalObservations()
+        let stopRelease = DispatchSemaphore(value: 0)
+        let url = try syntheticStore()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let original = try await beginCancelledRenewal(at: url, in: renewals, cleanup: cleanup, onStart: { epoch in
+            _ = try epoch.launch {
+                GrokRenewalEpoch.Child(pid: 424245, stop: { pid in
+                    #expect(pid == 424245)
+                    stopping.signal()
+                    guard stopRelease.wait(timeout: .now() + 2) == .success else { throw AIUsageError.timeout }
+                }, cleanup: {})
+            }
+        })
+        let oldEntry = try #require(await renewals.pending[url])
+        defer { stopRelease.signal(); cleanup.open(); original.cancel() }
+        try #require(await stopping.wait(timeout: 1))
+        // The original cancellation deadline is independent of force-stop completion.
+        do { _ = try await boundedResult(original, timeout: 1); Issue.record("Original waiter must be cancelled") }
+        catch is CancellationError {}
+        let fresh = try #require(try GrokBuildUsageSource.credential(from: data(scoped(auth())), now: now))
+        let operation: GrokCredentialRenewals.Operation = { _ in calls.launched(); return fresh }
+        let next = Task { try await renewals.refresh(at: url, operation: operation) }
+        let cancelled = Task { try await renewals.refresh(at: url, operation: operation) }
+        defer { next.cancel(); cancelled.cancel() }
+        try await waitForQueued(2, at: url, in: renewals)
+        cancelled.cancel()
+        do { _ = try await boundedResult(cancelled, timeout: 1); Issue.record("Queued caller must be cancelled") }
+        catch is CancellationError {}
+        #expect(calls.count == 0)
+        stopRelease.signal()
+        _ = try await boundedResult(next)
+        cleanup.open()
+        await oldEntry.task.value
         #expect(calls.count == 1)
         #expect(await renewals.pending[url] == nil)
+    }
+
+    private func syntheticStore() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("grok-store-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("synthetic-store")
+        try Data().write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+        return file
+    }
+
+    private func permissions(_ file: URL) throws -> Int? {
+        try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int
+    }
+}
+
+extension TidyBarTests.GrokBuildUsageTests {
+    @Test func successfulAbandonmentHasNoUnresolvedOriginalContinuations() async throws {
+        let file = try syntheticStore(), cleanup = RenewalGate(), stopping = TestSignal()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let release = DispatchSemaphore(value: 0)
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 100_000_000)
+        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup, onStart: { epoch in
+            _ = try epoch.launch {
+                GrokRenewalEpoch.Child(pid: 424249, stop: { _ in
+                    stopping.signal()
+                    #expect(release.wait(timeout: .now() + 5) == .success)
+                }, cleanup: {})
+            }
+        })
+        let entry = try #require(await renewals.pending[file])
+        defer { release.signal(); cleanup.open(); original.cancel() }
+        try #require(await stopping.wait(timeout: 2))
+        do { _ = try await boundedResult(original, timeout: 1); Issue.record("Original cancellation must precede abandonment success") }
+        catch is CancellationError {}
+        #expect(await renewals.pending[file]?.waiters.isEmpty == true)
+        #expect(await renewals.pending[file]?.cancellations.isEmpty == true)
+        release.signal()
+        try await waitForNoPending(at: file, in: renewals)
+        cleanup.open()
+        await entry.task.value
+        #expect(await renewals.pending[file] == nil)
+    }
+
+    @Test func normalCleanupFailureCompensatesStopAndRestoreAndRevokesOldWrites() async throws {
+        let file = try syntheticStore(), cleanup = RenewalGate(), restored = TestSignal()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let stops = RenewalObservations(), restores = RenewalObservations(), calls = RenewalObservations()
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 60_000_000_000, restore: { url in
+            restores.launched()
+            if restores.count == 1 { throw AIUsageError.invalidResponse }
+            try CredentialFiles.restrictAfterRenewal(at: url)
+            restored.signal()
+        })
+        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup, onStart: { epoch in
+            _ = try epoch.launch {
+                GrokRenewalEpoch.Child(pid: 424250, stop: { _ in
+                    stops.launched()
+                    if stops.count == 1 { throw AIUsageError.timeout }
+                }, cleanup: { throw AIUsageError.timeout })
+            }
+        }, onCleanup: { epoch in
+            do { try epoch.finish(at: file) }
+            catch {
+                #expect(throws: CancellationError.self) {
+                    try epoch.withCurrent { try Data("stale".utf8).write(to: file) }
+                }
+                throw error
+            }
+        })
+        let next = Task {
+            try await renewals.refresh(at: file) { _ in calls.launched(); throw AIUsageError.invalidResponse }
+        }
+        defer { cleanup.open(); original.cancel(); next.cancel() }
+        try await waitForQueued(1, at: file, in: renewals)
+        cleanup.open()
+        do { _ = try await boundedResult(next); Issue.record("Normal cleanup failure must fail the queue") }
+        catch AIUsageError.timeout {}
+        do { _ = try await boundedResult(original); Issue.record("Original cancellation must return before its long timer") }
+        catch is CancellationError {}
+        try #require(await restored.wait(timeout: 2))
+        #expect(stops.count == 2 && restores.count == 2)
+        #expect(try permissions(file) == 0o600)
+        #expect(try Data(contentsOf: file).isEmpty)
+        let later = Task {
+            try await renewals.refresh(at: file) { _ in calls.launched(); throw AIUsageError.invalidResponse }
+        }
+        do { _ = try await boundedResult(later); Issue.record("Compensation must preserve the fail-closed store lock") }
+        catch AIUsageError.timeout {}
+        #expect(calls.count == 0)
+        #expect(await renewals.pending[file]?.cleanupError != nil)
+    }
+
+    @Test func lateSpawnAfterCleanupTimeoutIsStoppedAndRestored() async throws {
+        let file = try syntheticStore(), cleanup = RenewalGate()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let completed = TestSignal(), stopped = TestSignal(), restored = TestSignal()
+        let stops = RenewalObservations()
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 100_000_000,
+            cleanupWaitTimeout: 100_000_000, restore: { url in
+                #expect(stops.count == 1)
+                try CredentialFiles.restrictAfterRenewal(at: url)
+                restored.signal()
+            })
+        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup, onStart: { epoch in
+            Task.detached {
+                defer { completed.signal() }
+                do {
+                    _ = try epoch.launch {
+                        entered.signal()
+                        #expect(release.wait(timeout: .now() + 5) == .success)
+                        return GrokRenewalEpoch.Child(pid: 424251, stop: { _ in
+                            stops.launched()
+                            stopped.signal()
+                        }, cleanup: {})
+                    }
+                    #expect(throws: CancellationError.self) {
+                        try epoch.withCurrent { try Data("stale".utf8).write(to: file) }
+                    }
+                } catch { Issue.record("In-flight spawn must finish recording its child") }
+            }
+            #expect(entered.wait(timeout: .now() + 2) == .success)
+        })
+        let entry = try #require(await renewals.pending[file])
+        defer { release.signal(); cleanup.open(); original.cancel() }
+        do { _ = try await boundedResult(original); Issue.record("Original cancellation must return") }
+        catch is CancellationError {}
+        let next = Task {
+            try await renewals.refresh(at: file) { _ in Issue.record("Late spawn must keep the store locked"); throw AIUsageError.invalidResponse }
+        }
+        do { _ = try await boundedResult(next); Issue.record("Stuck spawn must time out the queue") }
+        catch AIUsageError.timeout {}
+        try await waitForCleanupFailure(at: file, in: renewals)
+        #expect(await renewals.pending[file]?.cleanupError != nil)
+        release.signal()
+        try #require(await completed.wait(timeout: 2))
+        try #require(await stopped.wait(timeout: 2))
+        try #require(await restored.wait(timeout: 2))
+        #expect(stops.count == 1)
+        #expect(try permissions(file) == 0o600)
+        #expect(try Data(contentsOf: file).isEmpty)
+        cleanup.open()
+        await entry.task.value
+        #expect(await renewals.pending[file]?.cleanupError != nil)
+    }
+
+    @Test func normalCleanupFailureFailsQueuedAndLaterCallersWithoutRestoring() async throws {
+        let file = try syntheticStore()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let restored = RenewalObservations(), cleanup = RenewalGate(), calls = RenewalObservations()
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 60_000_000_000,
+            restore: { _ in restored.launched() })
+        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup,
+            onStart: { epoch in
+                _ = try epoch.launch {
+                    GrokRenewalEpoch.Child(pid: 424246, stop: { _ in throw AIUsageError.timeout },
+                        cleanup: { throw AIUsageError.timeout })
+                }
+            }, onCleanup: { try $0.finish(at: file) })
+        let next = Task {
+            try await renewals.refresh(at: file) { _ in calls.launched(); throw AIUsageError.invalidResponse }
+        }
+        defer { cleanup.open(); original.cancel(); next.cancel() }
+        try await waitForQueued(1, at: file, in: renewals)
+        cleanup.open()
+        do { _ = try await boundedResult(next); Issue.record("Cleanup failure must fail the queued caller") }
+        catch AIUsageError.timeout {}
+        let later = Task {
+            try await renewals.refresh(at: file) { _ in calls.launched(); throw AIUsageError.invalidResponse }
+        }
+        do { _ = try await boundedResult(later); Issue.record("Failed cleanup must keep the store blocked") }
+        catch AIUsageError.timeout {}
+        do { _ = try await boundedResult(original); Issue.record("Original caller must be cancelled") }
+        catch is CancellationError {}
+        #expect(restored.count == 0 && calls.count == 0)
+        #expect(try permissions(file) == 0o644)
+    }
+
+    @Test func recordedWriterStopsBeforeActiveDrainAndHonorsConfiguredCleanupWait() async throws {
+        let file = try syntheticStore(), cleanup = RenewalGate()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let completed = TestSignal(), stopped = TestSignal()
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 50_000_000,
+            cleanupWaitTimeout: 3_000_000_000)
+        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup, onStart: { epoch in
+            _ = try epoch.launch {
+                let process = try CLIProcess(executable: URL(fileURLWithPath: "/bin/sh"),
+                    arguments: ["-c", "trap '' TERM; while :; do printf stale > \"$STORE\"; /bin/chmod 644 \"$STORE\"; /bin/sleep 0.01; done"],
+                    environment: ["STORE": file.path], directory: file.deletingLastPathComponent())
+                return GrokRenewalEpoch.Child(pid: process.processIdentifier, stop: { _ in
+                    try process.stopRecordedChild()
+                    stopped.signal()
+                }, cleanup: { try process.stopRecordedChild() })
+            }
+            Task.detached {
+                defer { completed.signal() }
+                do {
+                    try epoch.withCurrent {
+                        entered.signal()
+                        #expect(release.wait(timeout: .now() + 5) == .success)
+                    }
+                } catch { Issue.record("Active operation must enter before cancellation") }
+            }
+            #expect(entered.wait(timeout: .now() + 2) == .success)
+        })
+        let entry = try #require(await renewals.pending[file])
+        let fresh = try #require(try GrokBuildUsageSource.credential(from: data(scoped(auth())), now: now))
+        let next = Task {
+            try await renewals.refresh(at: file) { epoch in
+                #expect(try self.permissions(file) == 0o600)
+                try epoch.withCurrent { try Data("fresh".utf8).write(to: file) }
+                return fresh
+            }
+        }
+        defer { release.signal(); cleanup.open(); original.cancel(); next.cancel() }
+        try await waitForQueued(1, at: file, in: renewals)
+        try #require(await stopped.wait(timeout: 1))
+        do { _ = try await boundedResult(original); Issue.record("Original cancellation must return while active work is blocked") }
+        catch is CancellationError {}
+        // A legitimate cleanup taking over one second still fits the configured three seconds.
+        try await Task.sleep(nanoseconds: 1_100_000_000)
+        #expect(await renewals.pending[file]?.cleanupError == nil)
+        #expect(await renewals.pending[file]?.abandoned == true)
+        release.signal()
+        try #require(await completed.wait(timeout: 2))
+        _ = try await boundedResult(next)
+        #expect(try Data(contentsOf: file) == Data("fresh".utf8))
+        cleanup.open()
+        await entry.task.value
+        #expect(await renewals.pending[file] == nil)
+    }
+
+    @Test func normalFinishUsesInjectedRestore() throws {
+        let restored = RenewalObservations()
+        let epoch = GrokRenewalEpoch(restore: { _ in restored.launched() })
+        try epoch.finish(at: FileManager.default.temporaryDirectory.appendingPathComponent("unused-synthetic-url"))
+        #expect(restored.count == 1)
+    }
+
+    @Test func queuedWaiterTimesOutWhileCleanupRemainsPending() async throws {
+        let file = try syntheticStore()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 60_000_000_000,
+            cleanupWaitTimeout: 100_000_000)
+        let cleanup = RenewalGate(), calls = RenewalObservations()
+        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup)
+        let entry = try #require(await renewals.pending[file])
+        let next = Task {
+            try await renewals.refresh(at: file) { _ in calls.launched(); throw AIUsageError.invalidResponse }
+        }
+        defer { cleanup.open(); original.cancel(); next.cancel() }
+        do { _ = try await boundedResult(next); Issue.record("Queued waiter must time out") }
+        catch AIUsageError.timeout {}
+        #expect(calls.count == 0)
+        #expect(await renewals.pending[file]?.id == entry.id)
+        #expect(await renewals.pending[file]?.queued.isEmpty == true)
+        cleanup.open()
+        await entry.task.value
+        do { _ = try await boundedResult(original); Issue.record("Original caller must be cancelled") }
+        catch is CancellationError {}
+    }
+
+    @Test func stuckForceStopTimesOutAndLateSuccessCannotReopenStore() async throws {
+        let file = try syntheticStore()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let cleanup = RenewalGate(), stopping = TestSignal(), stopped = TestSignal(), restored = TestSignal(), calls = RenewalObservations()
+        let stopRelease = DispatchSemaphore(value: 0)
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 100_000_000,
+            cleanupWaitTimeout: 100_000_000, restore: { url in
+                try CredentialFiles.restrictAfterRenewal(at: url)
+                restored.signal()
+            })
+        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup, onStart: { epoch in
+            _ = try epoch.launch {
+                GrokRenewalEpoch.Child(pid: 424247, stop: { _ in
+                    stopping.signal()
+                    guard stopRelease.wait(timeout: .now() + 5) == .success else { throw AIUsageError.timeout }
+                    stopped.signal()
+                }, cleanup: {})
+            }
+        })
+        let entry = try #require(await renewals.pending[file])
+        defer { stopRelease.signal(); cleanup.open(); original.cancel() }
+        try #require(await stopping.wait(timeout: 2))
+        let next = Task {
+            try await renewals.refresh(at: file) { _ in calls.launched(); throw AIUsageError.invalidResponse }
+        }
+        defer { next.cancel() }
+        do { _ = try await boundedResult(next); Issue.record("Stuck force stop must fail the queue") }
+        catch AIUsageError.timeout {}
+        try await waitForCleanupFailure(at: file, in: renewals)
+        #expect(try permissions(file) == 0o644)
+        stopRelease.signal()
+        try #require(await stopped.wait(timeout: 2))
+        try #require(await restored.wait(timeout: 2))
+        #expect(try permissions(file) == 0o600)
+        cleanup.open()
+        await entry.task.value
+        let later = Task {
+            try await renewals.refresh(at: file) { _ in calls.launched(); throw AIUsageError.invalidResponse }
+        }
+        do { _ = try await boundedResult(later); Issue.record("Late success must not reopen the entry") }
+        catch AIUsageError.timeout {}
+        #expect(calls.count == 0)
+        #expect(await renewals.pending[file]?.cleanupError != nil)
+        do { _ = try await boundedResult(original); Issue.record("Original caller must be cancelled") }
+        catch is CancellationError {}
+    }
+
+    @Test func blockedCurrentOperationCannotHoldRevocationLockOrHangQueue() async throws {
+        let file = try syntheticStore()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let cleanup = RenewalGate(), completed = TestSignal(), restored = TestSignal()
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 100_000_000,
+            cleanupWaitTimeout: 100_000_000, restore: { url in
+                try CredentialFiles.restrictAfterRenewal(at: url)
+                restored.signal()
+            })
+        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup, onStart: { epoch in
+            Task.detached {
+                defer { completed.signal() }
+                do {
+                    try epoch.withCurrent {
+                        entered.signal()
+                        #expect(release.wait(timeout: .now() + 5) == .success)
+                    }
+                } catch { Issue.record("Test operation was revoked before entering") }
+            }
+            #expect(entered.wait(timeout: .now() + 2) == .success)
+        })
+        let entry = try #require(await renewals.pending[file])
+        let next = Task {
+            try await renewals.refresh(at: file) { _ in Issue.record("Blocked old writer forbids fresh operation"); throw AIUsageError.invalidResponse }
+        }
+        defer { release.signal(); cleanup.open(); original.cancel(); next.cancel() }
+        do { _ = try await boundedResult(original); Issue.record("Original caller must be cancelled") }
+        catch is CancellationError {}
+        do { _ = try await boundedResult(next, timeout: 3); Issue.record("Quiescence must have a bound") }
+        catch AIUsageError.timeout {}
+        try await waitForCleanupFailure(at: file, in: renewals)
+        #expect(!(await restored.wait(timeout: 0.01)))
+        #expect(try permissions(file) == 0o644)
+        release.signal()
+        try #require(await completed.wait(timeout: 2))
+        try #require(await restored.wait(timeout: 2))
+        #expect(try permissions(file) == 0o600)
+        cleanup.open()
+        await entry.task.value
+        #expect(await renewals.pending[file]?.cleanupError != nil)
+    }
+
+    @Test func waitersArrivingAndCancellingDuringFailedStopUseLiveActorState() async throws {
+        let file = try syntheticStore()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let cleanup = RenewalGate(), stopping = TestSignal(), calls = RenewalObservations(), stops = RenewalObservations()
+        let release = DispatchSemaphore(value: 0)
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 100_000_000)
+        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup, onStart: { epoch in
+            _ = try epoch.launch {
+                GrokRenewalEpoch.Child(pid: 424248, stop: { _ in
+                    stops.launched()
+                    stopping.signal()
+                    if stops.count == 1 { _ = release.wait(timeout: .now() + 5) }
+                    throw AIUsageError.invalidResponse
+                }, cleanup: {})
+            }
+        })
+        let entry = try #require(await renewals.pending[file])
+        defer { release.signal(); cleanup.open(); original.cancel() }
+        try #require(await stopping.wait(timeout: 2))
+        let operation: GrokCredentialRenewals.Operation = { _ in calls.launched(); throw AIUsageError.timeout }
+        let first = Task { try await renewals.refresh(at: file, operation: operation) }
+        let cancelled = Task { try await renewals.refresh(at: file, operation: operation) }
+        defer { first.cancel(); cancelled.cancel() }
+        try await waitForQueued(2, at: file, in: renewals)
+        cancelled.cancel()
+        do { _ = try await boundedResult(cancelled); Issue.record("Queued cancellation must complete once") }
+        catch is CancellationError {}
+        let late = Task { try await renewals.refresh(at: file, operation: operation) }
+        defer { late.cancel() }
+        try await waitForQueued(2, at: file, in: renewals)
+        release.signal()
+        for caller in [first, late] {
+            do { _ = try await boundedResult(caller); Issue.record("Live queued callers must receive stop failure") }
+            catch AIUsageError.invalidResponse {}
+        }
+        cleanup.open()
+        await entry.task.value
+        #expect(calls.count == 0)
+        #expect(await renewals.pending[file]?.queued.isEmpty == true)
+        #expect(try permissions(file) == 0o644)
+        do { _ = try await boundedResult(original); Issue.record("Original caller must be cancelled") }
+        catch is CancellationError {}
+    }
+
+    @Test func forcedStopEndsRealDescendantWriterBeforeFreshWritesAndFinalRestriction() async throws {
+        let file = try syntheticStore(), cleanup = RenewalGate()
+        let folder = file.deletingLastPathComponent(), pidsFile = file.deletingLastPathComponent().appendingPathComponent("pids")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let script = folder.appendingPathComponent("writer.sh")
+        try """
+        trap '' TERM
+        if [ "$1" = writer ]; then
+          while :; do printf stale > "$STORE"; /bin/chmod 644 "$STORE"; /bin/sleep 0.01; done
+        fi
+        if [ "$1" = middle ]; then
+          /bin/sh "$0" writer &
+          printf '%s\\n%s\\n' "$$" "$!" > "$PIDS"
+          wait
+          exit
+        fi
+        /bin/sh "$0" middle &
+        wait
+        """.write(to: script, atomically: true, encoding: .utf8)
+        let renewals = GrokCredentialRenewals(cancellationCleanupTimeout: 100_000_000)
+        let original = try await beginCancelledRenewal(at: file, in: renewals, cleanup: cleanup, onStart: { epoch in
+            _ = try epoch.launch {
+                let process = try CLIProcess(executable: URL(fileURLWithPath: "/bin/sh"), arguments: [script.path],
+                    environment: ["STORE": file.path, "PIDS": pidsFile.path], directory: folder)
+                return GrokRenewalEpoch.Child(pid: process.processIdentifier,
+                    stop: { _ in try process.stopRecordedChild() }, cleanup: { try process.stopRecordedChild() })
+            }
+            let deadline = ProcessInfo.processInfo.systemUptime + 3
+            while (try? Data(contentsOf: file)) != Data("stale".utf8) || !FileManager.default.fileExists(atPath: pidsFile.path) {
+                guard ProcessInfo.processInfo.systemUptime < deadline else { throw AIUsageError.timeout }
+                usleep(5_000)
+            }
+        })
+        let descendants = try await ProcessTreeFixture.pids(at: pidsFile)
+        let entry = try #require(await renewals.pending[file])
+        let fresh = try #require(try GrokBuildUsageSource.credential(from: data(scoped(auth())), now: now))
+        let next = Task {
+            try await renewals.refresh(at: file) { epoch in
+                #expect(try self.permissions(file) == 0o600)
+                try await ProcessTreeFixture.expectExited(descendants)
+                for _ in 0..<20 {
+                    try epoch.withCurrent { try Data("fresh".utf8).write(to: file) }
+                    try await Task.sleep(nanoseconds: 5_000_000)
+                    #expect(try Data(contentsOf: file) == Data("fresh".utf8))
+                }
+                try epoch.finish(at: file)
+                return fresh
+            }
+        }
+        defer { cleanup.open(); original.cancel(); next.cancel() }
+        _ = try await boundedResult(next, timeout: 5)
+        cleanup.open()
+        await entry.task.value
+        do { _ = try await boundedResult(original); Issue.record("Original caller must be cancelled") }
+        catch is CancellationError {}
+        #expect(try permissions(file) == 0o600)
+        #expect(try Data(contentsOf: file) == Data("fresh".utf8))
+    }
+
+    @Test func processObservationRetainsPIDUntilGroupCleanupAndHandlesExternalReap() async throws {
+        for code in [0, 23] {
+            let process = try CLIProcess(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "exit \(code)"],
+                environment: [:], directory: FileManager.default.temporaryDirectory)
+            defer { process.terminateAndWait() }
+            let deadline = ProcessInfo.processInfo.systemUptime + 2
+            while process.isRunning {
+                try #require(ProcessInfo.processInfo.systemUptime < deadline)
+                try await Task.sleep(nanoseconds: 5_000_000)
+            }
+            #expect(process.succeeded == (code == 0))
+            var info = siginfo_t()
+            #expect(waitid(P_PID, id_t(process.processIdentifier), &info, WEXITED | WNOHANG | WNOWAIT) == 0)
+            #expect(info.si_pid == process.processIdentifier) // isRunning has not reaped it.
+            if code == 23 {
+                var status: Int32 = 0
+                #expect(waitpid(process.processIdentifier, &status, WNOHANG) == process.processIdentifier)
+            }
+            try process.stopRecordedChild() // ECHILD is terminal too; no later signals.
+            try process.stopRecordedChild()
+            #expect(kill(process.processIdentifier, 0) != 0)
+        }
+    }
+
+    @Test func failedProcessCleanupCanRetryAfterOwnershipLossWithoutSignalling() async throws {
+        let file = try syntheticStore(), release = file.deletingLastPathComponent().appendingPathComponent("release")
+        let folder = file.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let process = try CLIProcess(executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "(while [ -d \"$FOLDER\" ] && [ ! -f \"$RELEASE\" ]; do /bin/sleep 0.01; done) & exit 0"],
+            environment: ["FOLDER": folder.path, "RELEASE": release.path], directory: folder)
+        defer { process.terminateAndWait() }
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        while process.isRunning {
+            try #require(ProcessInfo.processInfo.systemUptime < deadline)
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        // Simulate loss of ownership of our recorded leader. Neither cleanup may signal
+        // the remaining group; its writer exits only after the explicit fixture release.
+        var status: Int32 = 0
+        try #require(waitpid(process.processIdentifier, &status, WNOHANG) == process.processIdentifier)
+        do { try process.stopRecordedChild(); Issue.record("A live group with a reaped leader cannot confirm cleanup") }
+        catch let error as POSIXError { #expect(error.code == .ECHILD) }
+        try Data().write(to: release)
+        let cleanupDeadline = ProcessInfo.processInfo.systemUptime + 2
+        while true {
+            do { try process.stopRecordedChild(); break }
+            catch let error as POSIXError {
+                #expect(error.code == .ECHILD)
+                try #require(ProcessInfo.processInfo.systemUptime < cleanupDeadline, "A failed cleanup must be retryable after the group exits")
+                try await Task.sleep(nanoseconds: 5_000_000)
+            }
+        }
+        try process.stopRecordedChild()
     }
 }

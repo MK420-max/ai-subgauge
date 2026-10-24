@@ -9,7 +9,7 @@ See how much of your AI subscriptions is left, from the macOS menu bar or the Wi
 [![macOS](https://img.shields.io/badge/macOS-26%2B-000000?logo=apple&logoColor=white)](mac/README.en.md)
 [![Windows](https://img.shields.io/badge/Windows-tray-0078D6?logo=windows&logoColor=white)](windows/README.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.0.2-blue.svg)](#installation)
+[![Version](https://img.shields.io/badge/version-2.0.3-blue.svg)](#installation)
 [![GitHub stars](https://img.shields.io/github/stars/MK420-max/ai-subgauge?style=social)](https://github.com/MK420-max/ai-subgauge/stargazers)
 
 **English** · [简体中文](README.zh-CN.md)
@@ -17,6 +17,8 @@ See how much of your AI subscriptions is left, from the macOS menu bar or the Wi
 </div>
 
 Mac 2.0 adds quota-arc menu bar icons, glass panels, a unified settings window, and menu bar collection. Windows keeps its existing tray interface.
+
+Mac 2.0.3 (build 203) recovers cancelled Grok renewals stuck beyond the 3-second cleanup deadline. It stops the recorded CLI child and restores credential permissions to `0600` before starting one shared renewal.
 
 ## Screenshots
 
