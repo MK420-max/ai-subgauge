@@ -106,12 +106,15 @@ extension AIUsageProvider {
 enum AIVisibilityPreferences {
     static let alwaysShowKey = "AlwaysShowAll"
     static let selectionKey = "aiUsage.selectedProviders"
+    static func selectionOverrides(defaults: UserDefaults = .standard) -> [String: Bool] {
+        (defaults.dictionary(forKey: selectionKey) ?? [:]).compactMapValues { $0 as? Bool }
+    }
     static func selected(automatic: Set<String>, defaults: UserDefaults = .standard) -> Set<String> {
-        let overrides = defaults.dictionary(forKey: selectionKey) as? [String: Bool] ?? [:]
+        let overrides = selectionOverrides(defaults: defaults)
         return Set(AIUsageProvider.allCases.map(\.rawValue).filter { overrides[$0] ?? automatic.contains($0) })
     }
     static func setSelected(_ selected: Bool, provider: AIUsageProvider, defaults: UserDefaults = .standard) {
-        var values = defaults.dictionary(forKey: selectionKey) as? [String: Bool] ?? [:]
+        var values = selectionOverrides(defaults: defaults)
         values[provider.rawValue] = selected
         defaults.set(values, forKey: selectionKey)
     }

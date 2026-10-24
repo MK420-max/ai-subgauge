@@ -179,7 +179,8 @@ final class ThemeController {
     private static var lastIconDark: Bool?
     func start() {
         appearanceObservation = NSApp.publisher(for: \.effectiveAppearance, options: [.initial, .new])
-            .map(\.name).removeDuplicates().dropFirst().receive(on: DispatchQueue.main)
+            .receive(on: DispatchQueue.main)
+            .map { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua }.removeDuplicates().dropFirst()
             .sink { _ in Self.updateIcon() }
         defaultsObservation = NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .map { _ in Self.preference }.prepend(Self.preference).removeDuplicates().dropFirst()
@@ -189,6 +190,7 @@ final class ThemeController {
     func stop() {
         appearanceObservation = nil
         defaultsObservation = nil
+        Self.lastIconDark = nil
     }
     private func apply() {
         let manual = Self.preference
