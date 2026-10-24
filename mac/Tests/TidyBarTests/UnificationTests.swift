@@ -23,6 +23,16 @@ private final class MockMigrationKeychain: MigrationKeychain {
 extension TidyBarTests {
 @Suite
 final class UnificationTests {
+    @Test
+    func appVersionMatchesPackagedVersionAndBuild() throws {
+        let mac = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let data = try Data(contentsOf: mac.appendingPathComponent("Resources/Info.plist"))
+        let info = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        #expect(AppIdentifiers.version == "2.0.2")
+        #expect(info["CFBundleShortVersionString"] as? String == AppIdentifiers.version)
+        #expect(info["CFBundleVersion"] as? String == "202")
+    }
+
     private func directory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("subgauge-test-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -205,7 +215,7 @@ final class UnificationTests {
         #expect(!text.contains("private-"))
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(Set(object.keys) == ["app", "version", "os", "providers"])
-        #expect(object["version"] as? String == "2.0.1")
+        #expect(object["version"] as? String == "2.0.2")
         #expect((object["providers"] as? [[String: String]])?.first?["state"] == "error")
     }
 

@@ -152,7 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let previous = notification.userInfo?["previousLayout"] as? LayoutPreset else { return }
             self.applyPreset(previous: previous, id: notification.userInfo?["presetID"] as? UUID)
         }.store(in: &subscriptions)
-        engine.$isExpanded.sink { [weak self] expanded in
+        engine.$isExpanded.removeDuplicates().sink { [weak self] expanded in
             self?.statusItem?.button?.image = NSImage(systemSymbolName: expanded ? "tray.full.fill" : "tray.2", accessibilityDescription: L10n.text("app.name"))
         }.store(in: &subscriptions)
         automation.start()

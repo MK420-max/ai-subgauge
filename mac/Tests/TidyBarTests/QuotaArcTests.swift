@@ -396,6 +396,48 @@ extension TidyBarTests {
         }
     }
 
+    @MainActor @Test func emptyStatusMenuBitmapDoesNotAllocateOrDraw() throws {
+        let image = QuotaMenuImage.bitmapImage(snapshots: [], showPercentage: true,
+            colorsByQuota: true, placement: .arcTop, appearance: try #require(NSAppearance(named: .aqua)))
+        #expect(image.size.width == 0)
+        #expect(image.representations.isEmpty)
+    }
+
+    @MainActor @Test func statusMenuBitmapHasNativeScalesAndMatchesDrawingAtEachAppearance() throws {
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            let appearance = try #require(NSAppearance(named: name))
+            for (percentage, placement) in [(false, AIUsageMenuBarPreference.PercentagePlacement.arcTop),
+                                             (true, .arcTop), (true, .beside)] {
+                let image = QuotaMenuImage.bitmapImage(snapshots: Self.menuSnapshots, showPercentage: percentage,
+                    colorsByQuota: true, placement: placement, appearance: appearance)
+                let reference = QuotaMenuImage.image(snapshots: Self.menuSnapshots, showPercentage: percentage,
+                    colorsByQuota: true, placement: placement)
+                #expect(image.size == reference.size)
+                #expect(image.representations.count == 2)
+                #expect(image.representations.allSatisfy { $0 is NSBitmapImageRep })
+                for scale in [1, 2] {
+                    #expect(image.representations.contains { $0.pixelsWide == Int(image.size.width) * scale && $0.pixelsHigh == 22 * scale })
+                    let actual = try Self.renderMenu(image, scale: scale, appearance: name)
+                    let expected = try Self.renderMenu(reference, scale: scale, appearance: name)
+                    var mismatchedPixels = 0
+                    for y in stride(from: 0, to: actual.pixelsHigh, by: 2) {
+                        for x in stride(from: 0, to: actual.pixelsWide, by: 2) {
+                            let a = try #require(actual.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+                            let b = try #require(expected.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+                            let alphaMatches = abs(a.alphaComponent - b.alphaComponent) < 0.02
+                            let colorMatches = b.alphaComponent <= 0.5 ||
+                                (abs(a.redComponent - b.redComponent) < 0.02 &&
+                                 abs(a.greenComponent - b.greenComponent) < 0.02 &&
+                                 abs(a.blueComponent - b.blueComponent) < 0.02)
+                            if !alphaMatches || !colorMatches { mismatchedPixels += 1 }
+                        }
+                    }
+                    #expect(mismatchedPixels == 0, "appearance=\(name) percentage=\(percentage) placement=\(placement) scale=\(scale)")
+                }
+            }
+        }
+    }
+
     @MainActor @Test func menuImageResolvesColorsAndGlyphsAtEachDrawingAppearance() throws {
         // Reuse one image, as the status button does when its appearance changes.
         let image = QuotaMenuImage.image(snapshots: Self.menuSnapshots, showPercentage: false)
