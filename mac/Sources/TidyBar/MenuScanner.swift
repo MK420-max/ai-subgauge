@@ -34,9 +34,27 @@ final class MenuScanner: @unchecked Sendable {
     private var lastMenuProbe: Date?
     private var lastMenuEvidence: [String: Any] = [:]
     private var lastActivationProbe: [String: Any] = [:]
+    // Captured from NSStatusItem windows by MenuEngine on the main actor; never via self AX.
     var ownStatusFrames: [CGRect] = []
     private var lastHostDiagnostic: [String: Any] = [:]
     private var lastGeometryEvidence: [String: [[String: Any]]] = [:]
+    private let selfPID = ProcessInfo.processInfo.processIdentifier
+
+    // Unknown/zero PIDs retain the existing scan behavior and never count as self.
+    static func shouldScanPID(_ pid: pid_t?, selfPID: pid_t) -> Bool {
+        guard let pid, pid > 0 else { return true }
+        return pid != selfPID
+    }
+
+    static func isOverflowSlot(pid: pid_t, hasContent: Bool, selfPID: pid_t) -> Bool {
+        shouldScanPID(pid, selfPID: selfPID) && (!hasContent || pid == 0)
+    }
+
+    private func canReadElement(_ ax: AXUIElement) -> Bool {
+        var pid: pid_t = 0
+        let result = AXUIElementGetPid(ax, &pid)
+        return Self.shouldScanPID(result == .success ? pid : nil, selfPID: selfPID)
+    }
 
     func scan(probeActiveMenu: Bool = true) -> Snapshot {
         guard AXIsProcessTrusted() else { elements.removeAll(); lastEntries.removeAll(); lastHostedIDs.removeAll(); ownerPIDs.removeAll(); return Snapshot(items: [], hasActiveMenu: false) }
@@ -50,8 +68,9 @@ final class MenuScanner: @unchecked Sendable {
         var systemOverflowIDs = Set<String>()
         let requiresHostedSlot = true
         func append(_ element: AXUIElement, owner: NSRunningApplication, fallbackFrame: CGRect? = nil, forceZeroFrame: Bool = false, hostEvidence: [String: Any]? = nil) {
-            guard let bundle = owner.bundleIdentifier, text(element, "AXRole") != "AXApplication" else { return }
             AXUIElementSetMessagingTimeout(element, 0.2)
+            guard Self.shouldScanPID(owner.processIdentifier, selfPID: selfPID), canReadElement(element) else { return }
+            guard let bundle = owner.bundleIdentifier, text(element, "AXRole") != "AXApplication" else { return }
             let identifier = text(element, "AXIdentifier")
             let label = [text(element, "AXTitle"), text(element, "AXDescription"), text(element, "AXHelp")].first { !$0.isEmpty } ?? ""
             let stable = identifier.isEmpty || identifier.hasPrefix("_NS:") ? "状态图标" : identifier
@@ -80,18 +99,20 @@ final class MenuScanner: @unchecked Sendable {
             if fallbackFrame != nil { hostedIDs.insert(id) }
         }
         // On macOS 27, MenuBarAgent hosts the bar and its slot's content belongs to the source app.
-        if let agent = apps.first(where: { $0.bundleIdentifier == "com.apple.MenuBarAgent" }) {
+        if let agent = apps.first(where: { $0.bundleIdentifier == "com.apple.MenuBarAgent" }),
+           Self.shouldScanPID(agent.processIdentifier, selfPID: selfPID) {
             let appAX = AXUIElementCreateApplication(agent.processIdentifier)
             AXUIElementSetMessagingTimeout(appAX, 0.25)
             let windows = children(appAX, attribute: "AXWindows")
             var hosts: [(index: Int, frame: CGRect, slots: [(element: AXUIElement, frame: CGRect, content: AXUIElement?, pid: pid_t)])] = []
             for (index, window) in windows.enumerated() {
+                guard canReadElement(window) else { continue }
                 guard let windowFrame = rect(window) else { continue }
                 let slots = children(window).compactMap { slot -> (AXUIElement, CGRect, AXUIElement?, pid_t)? in
                     guard let frame = rect(slot), frame.width > 0, frame.height > 0 else { return nil }
                     let content = children(slot).first
                     var pid: pid_t = 0
-                    if let content { AXUIElementGetPid(content, &pid) }
+                    if let content { AXUIElementSetMessagingTimeout(content, 0.2); AXUIElementGetPid(content, &pid) }
                     return (slot, frame, content, pid)
                 }
                 hosts.append((index, windowFrame, slots))
@@ -104,7 +125,7 @@ final class MenuScanner: @unchecked Sendable {
                     let screen = CGDisplayBounds(display)
                     let onScreen = hosts.filter { $0.frame.intersects(screen) }
                     let layouts = Dictionary(uniqueKeysWithValues: onScreen.map { ($0.index, $0.slots.map { HostedSlotGeometry(pid: $0.pid, frame: $0.frame) }) })
-                    let ownSlots = Dictionary(uniqueKeysWithValues: onScreen.map { ($0.index, $0.slots.filter { $0.pid == ProcessInfo.processInfo.processIdentifier }.map { $0.frame }) })
+                    let ownSlots = Dictionary(uniqueKeysWithValues: onScreen.map { ($0.index, $0.slots.filter { !Self.shouldScanPID($0.pid, selfPID: selfPID) }.map { $0.frame }) })
                     if let index = Self.selectHostedWindow(layouts: layouts, ownSlots: ownSlots, ownFrames: ownStatusFrames) { selected.insert(index) }
                 }
             }
@@ -126,22 +147,28 @@ final class MenuScanner: @unchecked Sendable {
                  "windowNumber": (value(windows[host.index], "AXWindowNumber") as? NSNumber)?.intValue ?? -1,
                  "privateWindow": privateWindow, "cgWindow": match.map(windowFields) ?? ["matched": false],
                  "slots": host.slots.map { slot -> [String: Any] in
-                    ["pid": slot.pid, "frame": NSStringFromRect(slot.frame), "rawGeometry": rawGeometry(slot.element),
-                     "role": text(slot.element, "AXRole"), "contentRole": slot.content.map { text($0, "AXRole") } ?? "none",
-                     "sourceAXFrame": slot.content.flatMap { rect($0) }.map(NSStringFromRect) ?? "unavailable",
-                     "overflowButton": slot.content == nil ? ["title": text(slot.element, "AXTitle"), "description": text(slot.element, "AXDescription"),
+                    let skippedSelf = !Self.shouldScanPID(slot.pid, selfPID: selfPID)
+                    let content = skippedSelf ? nil : slot.content
+                    return ["pid": slot.pid, "skippedSelf": skippedSelf, "frame": NSStringFromRect(slot.frame), "rawGeometry": rawGeometry(slot.element),
+                     "role": text(slot.element, "AXRole"), "contentRole": skippedSelf ? "skippedSelf" : content.map { text($0, "AXRole") } ?? "none",
+                     "sourceAXFrame": content.flatMap { rect($0) }.map(NSStringFromRect) ?? "unavailable",
+                     "overflowButton": Self.isOverflowSlot(pid: slot.pid, hasContent: slot.content != nil, selfPID: selfPID) ? ["title": text(slot.element, "AXTitle"), "description": text(slot.element, "AXDescription"),
                          "identifier": text(slot.element, "AXIdentifier"), "expanded": (value(slot.element, "AXExpanded") as? NSNumber)?.intValue ?? -1,
                          "value": (value(slot.element, "AXValue") as? NSNumber)?.intValue ?? -1] : [:]]
                  }]
             }
             menuStateLock.lock()
             lastHostDiagnostic = ["ownStatusFrame": ownStatusFrames.first.map(NSStringFromRect) ?? "unavailable",
+                                  "selfPID": selfPID, "scannedSlotPIDs": hosts.flatMap { $0.slots.map(\.pid) },
+                                  "scannedSlotPIDsMeaning": "allObservedHostSlotsIncludingSkippedSelf",
+                                  "skippedSelfSlots": hosts.reduce(0) { $0 + $1.slots.filter { !Self.shouldScanPID($0.pid, selfPID: selfPID) }.count },
                                   "ownStatusFrames": ownStatusFrames.map(NSStringFromRect), "windows": hostFields,
                                   "agentCGWindows": cgWindows.map(windowFields)]
             menuStateLock.unlock()
             for host in hosts where selected.contains(host.index) {
-                let chevron = host.slots.first { $0.content == nil || $0.pid == 0 }?.frame
+                let chevron = host.slots.first { Self.isOverflowSlot(pid: $0.pid, hasContent: $0.content != nil, selfPID: selfPID) }?.frame
                 for (slotIndex, slot) in host.slots.enumerated() {
+                    guard Self.shouldScanPID(slot.pid, selfPID: selfPID) else { continue }
                     guard let content = slot.content, let owner = byPID[slot.pid] else { continue }
                     let otherFrames = host.slots.enumerated().filter { $0.offset != slotIndex }.map { $0.element.frame }
                     let actionable = Self.hostedSlotIsDistinct(slot.frame, others: otherFrames)
@@ -176,6 +203,7 @@ final class MenuScanner: @unchecked Sendable {
         checkedPIDs.formIntersection(livePIDs)
         extraOwnerPIDs.formIntersection(livePIDs)
         for app in apps {
+            guard Self.shouldScanPID(app.processIdentifier, selfPID: selfPID) else { continue }
             guard let bundle = app.bundleIdentifier, !hostedBundles.contains(bundle) else { continue }
             guard fullSweep || !checkedPIDs.contains(app.processIdentifier) || extraOwnerPIDs.contains(app.processIdentifier) else { continue }
             checkedPIDs.insert(app.processIdentifier)
@@ -192,7 +220,7 @@ final class MenuScanner: @unchecked Sendable {
             } else { for item in entries { append(item, owner: app, forceZeroFrame: requiresHostedSlot) } }
         }
         // Keep hidden identities while their owner is alive; no stale coordinates may be clicked.
-        let runningBundles = Set(apps.compactMap(\.bundleIdentifier))
+        let runningBundles = Set(apps.filter { Self.shouldScanPID($0.processIdentifier, selfPID: selfPID) }.compactMap(\.bundleIdentifier))
         let freshOwnerBundles = Set(found.values.filter { ax[$0.id] != nil }.map(\.bundleID))
         for (id, old) in lastEntries where found[id] == nil && runningBundles.contains(old.bundleID) && !freshOwnerBundles.contains(old.bundleID) {
             var cached = old
@@ -220,7 +248,7 @@ final class MenuScanner: @unchecked Sendable {
     func diagnosticSnapshot() -> [[String: Any]] {
         updateHostHitEvidence()
         return lastEntries.values.sorted { $0.id < $1.id }.map { entry in
-            let ax = elements[entry.id]
+            let ax = elements[entry.id].flatMap { canReadElement($0) ? $0 : nil }
             var pid: pid_t = 0
             var attributes: CFArray?
             if let ax { AXUIElementGetPid(ax, &pid); AXUIElementCopyAttributeNames(ax, &attributes) }
@@ -241,7 +269,7 @@ final class MenuScanner: @unchecked Sendable {
 
     func activate(id: String) -> String? {
         _ = scan()
-        guard let entry = lastEntries[id], let ax = elements[id], entry.frame.width > 0,
+        guard let entry = lastEntries[id], let ax = elements[id], canReadElement(ax), entry.frame.width > 0,
               !["AXApplication", "AXMenuBar", "AXMenu"].contains(text(ax, "AXRole")) else {
             return L10n.text("layout.the.icon.is.not.currently.in.a")
         }
@@ -284,7 +312,8 @@ final class MenuScanner: @unchecked Sendable {
 
     func tryExpandSystemOverflow(screens: [CGRect], isCancelled: () -> Bool) -> (point: CGPoint?, diagnostic: [String: Any]) {
         guard AXIsProcessTrusted(), CGPreflightPostEventAccess(),
-              let agent = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.MenuBarAgent").first else {
+              let agent = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.MenuBarAgent").first,
+              Self.shouldScanPID(agent.processIdentifier, selfPID: selfPID) else {
             return (nil, ["attempted": false, "reason": "permissionOrAgentUnavailable"])
         }
         let show: Set<String> = ["显示隐藏菜单栏项目", "Show Hidden Menu Bar Items"]
@@ -293,7 +322,8 @@ final class MenuScanner: @unchecked Sendable {
         AXUIElementSetMessagingTimeout(app, 0.1)
         var buttons: [(ax: AXUIElement, frame: CGRect, label: String)] = []
         for window in children(app, attribute: "AXWindows") {
-            for button in children(window) where text(button, "AXRole") == "AXButton" && children(button).isEmpty {
+            guard canReadElement(window) else { continue }
+            for button in children(window) where canReadElement(button) && text(button, "AXRole") == "AXButton" && children(button).isEmpty {
                 var pid: pid_t = 0
                 guard AXUIElementGetPid(button, &pid) == .success, pid == agent.processIdentifier,
                       let label = [text(button, "AXTitle"), text(button, "AXDescription")].first(where: { labels.contains($0) }),
@@ -350,7 +380,11 @@ final class MenuScanner: @unchecked Sendable {
         var hit: AXUIElement?
         let hitResult = AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit)
         var hitPID: pid_t = 0
-        if let hit { AXUIElementSetMessagingTimeout(hit, 0.1); AXUIElementGetPid(hit, &hitPID) }
+        if let candidate = hit {
+            AXUIElementSetMessagingTimeout(candidate, 0.1)
+            AXUIElementGetPid(candidate, &hitPID)
+            if !Self.shouldScanPID(hitPID, selfPID: selfPID) { hit = nil }
+        }
         let hitRole = hit.map { text($0, "AXRole") } ?? ""
         let hitLabel = hit.flatMap { item in [text(item, "AXTitle"), text(item, "AXDescription")].first(where: { labels.contains($0) }) } ?? ""
         let hitFrame = hit.flatMap { rect($0) }
@@ -535,7 +569,7 @@ final class MenuScanner: @unchecked Sendable {
         menuStateLock.lock(); lastMenuEvidence = [:]; menuStateLock.unlock()
         var pids = ownerPIDs
         if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier { pids.insert(pid) }
-        for pid in pids {
+        for pid in pids where Self.shouldScanPID(pid, selfPID: selfPID) {
             let app = AXUIElementCreateApplication(pid)
             AXUIElementSetMessagingTimeout(app, 0.1)
             if let extras = element(app, "AXExtrasMenuBar") {
@@ -620,6 +654,7 @@ final class MenuScanner: @unchecked Sendable {
                 return a && !b
             }
             for slotIndex in indices {
+                if let pid = slots[slotIndex]["pid"] as? pid_t, !Self.shouldScanPID(pid, selfPID: selfPID) { continue }
                 guard Date() < deadline, let frameString = slots[slotIndex]["frame"] as? String else { break }
                 let frame = NSRectFromString(frameString)
                 let isChevron = (slots[slotIndex]["overflowButton"] as? [String: Any])?.isEmpty == false
@@ -642,9 +677,13 @@ final class MenuScanner: @unchecked Sendable {
         while let current = hit, chain.count < 4, Date() < deadline {
             if seen.contains(where: { CFEqual($0, current) }) { break }
             seen.append(current)
-            AXUIElementSetMessagingTimeout(current, 0.03)
             var pid: pid_t = 0
+            AXUIElementSetMessagingTimeout(current, 0.03)
             AXUIElementGetPid(current, &pid)
+            guard Self.shouldScanPID(pid, selfPID: selfPID) else {
+                chain.append(["pid": pid, "skippedSelf": true])
+                break
+            }
             let role = text(current, "AXRole")
             var fields: [String: Any] = ["pid": pid, "role": role, "identifier": text(current, "AXIdentifier")]
             if includeChevronLabels && chain.isEmpty && role == "AXButton",
@@ -682,6 +721,10 @@ final class MenuScanner: @unchecked Sendable {
         }
     }
     private func value(_ ax: AXUIElement, _ name: String) -> CFTypeRef? {
+        // Safety net after entry-point PID filters: traversals can cross into self from an
+        // agent-owned parent. No scanner path needs self AX attributes; ownStatusFrames
+        // comes from NSStatusItem windows on the main actor.
+        guard canReadElement(ax) else { return nil }
         var result: CFTypeRef?
         guard AXUIElementCopyAttributeValue(ax, name as CFString, &result) == .success else { return nil }
         return result

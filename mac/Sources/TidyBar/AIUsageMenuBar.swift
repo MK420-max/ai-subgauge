@@ -24,6 +24,32 @@ enum AIUsageMenuBarPreference {
     }
 }
 
+/// Only inputs that change status-button pixels. Metadata/staleness still updates the tooltip.
+/// Error/connection state is folded into displayedPercent; bitmapImage supplies both 1x/2x reps.
+struct AIUsageMenuBarRenderKey: Equatable {
+    struct Segment: Equatable {
+        let provider: AIUsageProvider
+        let percent: Double?
+    }
+    let idle: Bool
+    let segments: [Segment]
+    let showPercentage: Bool
+    let colorsByQuota: Bool
+    let placement: AIUsageMenuBarPreference.PercentagePlacement
+    let appearance: NSAppearance.Name
+
+    @MainActor
+    init(snapshots: [AIUsageSnapshot], enabled: Bool, showPercentage: Bool, colorsByQuota: Bool,
+         placement: AIUsageMenuBarPreference.PercentagePlacement, appearance: NSAppearance.Name) {
+        idle = !enabled || snapshots.isEmpty
+        segments = idle ? [] : snapshots.map { Segment(provider: $0.provider, percent: QuotaMenuImage.displayedPercent($0)) }
+        self.showPercentage = !idle && showPercentage
+        self.colorsByQuota = !idle && colorsByQuota
+        self.placement = !idle && showPercentage ? placement : .arcTop
+        self.appearance = appearance
+    }
+}
+
 @MainActor
 enum AIUsageBrand {
     static var previewResources: URL?
@@ -121,6 +147,7 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
     private var subscriptions: Set<AnyCancellable> = []
     private var timer: Timer?
     private var started = false
+    private var lastRenderKey: AIUsageMenuBarRenderKey?
     var panel: AIUsagePanel { PopupManager.shared.panel }
     var themeOverride: AppTheme?
     private var presentationSnapshots: [AIUsageSnapshot] {
@@ -162,47 +189,62 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
         appearanceObservation = nil
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
         statusItem = nil
+        lastRenderKey = nil
     }
 
     private func update() {
         guard started else { return }
         // Keep one app entry when quota display is off.
         let preferences = store.subscriptionPreferences
-        let idle = !AIUsageMenuBarPreference.isEnabled(defaults: preferences.defaults) || presentationSnapshots.isEmpty
-        let image = idle ? AppBrand.idleImage() : QuotaMenuImage.image(
-            snapshots: presentationSnapshots,
-            showPercentage: AIUsageMenuBarPreference.showsPercentage(defaults: preferences.defaults),
-            colorsByQuota: preferences.colorsByQuota,
-            placement: AIUsageMenuBarPreference.percentagePlacement(defaults: preferences.defaults))
-        let length = image.size.width
+        let snapshots = presentationSnapshots
         if statusItem == nil {
             let autosaveName = (Bundle.main.bundleIdentifier ?? "com.mike.aisubgauge") + ".ai-usage"
             let positionKey = "NSStatusItem Preferred Position " + autosaveName
             if UserDefaults.standard.object(forKey: positionKey) == nil {
                 UserDefaults.standard.set(0, forKey: positionKey)
             }
-            let item = NSStatusBar.system.statusItem(withLength: length)
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             item.autosaveName = autosaveName
             item.button?.setAccessibilityIdentifier("com.mike.aisubgauge.ai-usage")
             item.button?.setAccessibilityLabel(L10n.text("menu.ai.remaining.quota"))
             item.button?.target = self
             item.button?.action = #selector(statusItemClicked(_:))
             item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            item.button?.imageScaling = .scaleProportionallyDown
+            item.button?.title = ""
+            item.button?.imagePosition = .imageOnly
             item.isVisible = true
             statusItem = item
             if let button = item.button { statusButtonRegistration = PopupManager.shared.registerStatusButton(button) }
             appearanceObservation = item.button?.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
-                Task { @MainActor in self?.update() }
+                Task { @MainActor in
+                    self?.lastRenderKey = nil
+                    self?.update()
+                }
             }
         }
-        statusItem?.button?.image = image
-        statusItem?.button?.needsDisplay = true
-        statusItem?.button?.imageScaling = .scaleProportionallyDown
-        statusItem?.length = length
-        statusItem?.button?.contentTintColor = idle ? .secondaryLabelColor : nil
+        // The button can differ from NSApp, including on the very first render.
+        let appearance = statusItem?.button?.effectiveAppearance ?? NSApp.effectiveAppearance
+        let key = AIUsageMenuBarRenderKey(snapshots: snapshots,
+            enabled: AIUsageMenuBarPreference.isEnabled(defaults: preferences.defaults),
+            showPercentage: AIUsageMenuBarPreference.showsPercentage(defaults: preferences.defaults),
+            colorsByQuota: preferences.colorsByQuota,
+            placement: AIUsageMenuBarPreference.percentagePlacement(defaults: preferences.defaults), appearance: appearance.name)
+        let idle = key.idle
+        if lastRenderKey != key {
+            // Set the key before AppKit setters can emit defaults/appearance notifications.
+            lastRenderKey = key
+            let image = idle ? AppBrand.idleImage() : QuotaMenuImage.bitmapImage(snapshots: snapshots,
+                showPercentage: key.showPercentage, colorsByQuota: key.colorsByQuota,
+                placement: key.placement, appearance: appearance)
+            statusItem?.button?.image = image
+            if statusItem?.length != image.size.width { statusItem?.length = image.size.width }
+            let tint: NSColor? = idle ? .secondaryLabelColor : nil
+            if statusItem?.button?.contentTintColor != tint { statusItem?.button?.contentTintColor = tint }
+        }
         let now = Date()
         var tooltip: [String] = [L10n.text("menu.ai.account.quota.click.or.right.click")]
-        for connected in presentationSnapshots {
+        for connected in snapshots {
             let provider = connected.provider
             let snapshot: AIUsageSnapshot? = connected
             let window = snapshot?.windows.first { Self.remaining($0.remainingPercent) != nil }
@@ -216,9 +258,8 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
             if let source = snapshot?.source { line += L10n.text("menu.source") + source }
             tooltip.append(line)
         }
-        statusItem?.button?.title = ""
-        statusItem?.button?.imagePosition = .imageOnly
-        statusItem?.button?.toolTip = idle ? L10n.text("idle.tooltip") : tooltip.joined(separator: "\n")
+        let tooltipText = idle ? L10n.text("idle.tooltip") : tooltip.joined(separator: "\n")
+        if statusItem?.button?.toolTip != tooltipText { statusItem?.button?.toolTip = tooltipText }
         if PopupManager.shared.kind == .quota, panel.isVisible { updatePanel() }
     }
 
