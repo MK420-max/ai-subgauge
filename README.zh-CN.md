@@ -6,7 +6,7 @@
 
 在 macOS 菜单栏或 Windows 托盘，一眼看到各家 AI 订阅还剩多少额度。
 
-[![macOS](https://img.shields.io/badge/macOS-27%2B-000000?logo=apple&logoColor=white)](mac/README.md)
+[![macOS](https://img.shields.io/badge/macOS-26%2B-000000?logo=apple&logoColor=white)](mac/README.md)
 [![Windows](https://img.shields.io/badge/Windows-tray-0078D6?logo=windows&logoColor=white)](windows/README.md#简体中文)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)](#安装)
@@ -68,9 +68,11 @@ Windows 托盘（演示数据）：每家一个图标，彩色液位高度就是
 
 ## 安装
 
+macOS 26 可以安装，但尚未在 macOS 26 真机上测试，菜单栏图标的识别可能有差异。
+
 目前还没有预编译的发布包，请先按下文从源码构建，然后：
 
-- **macOS 27 及以上（Apple Silicon）：** 把 `dist/AI SubGauge.app` 移到 `/Applications`。构建使用临时签名、未经公证，Gatekeeper 可能要求手动允许。整理图标需要辅助功能权限。
+- **macOS 26 及以上（Apple Silicon）：** 把 `dist/AI SubGauge.app` 移到 `/Applications`。构建使用临时签名、未经公证，Gatekeeper 可能要求手动允许。整理图标需要辅助功能权限。
 - **Windows：** 把发布出的文件复制到 `%LOCALAPPDATA%\Programs\AISubGauge\`，运行 `AISubGauge.exe`，不需要管理员权限。
 
 从 Mac AI Bar Cleaner 或 WindowsQuotaTray 升级：首次启动会自动迁移设置，详见 [mac/docs/MIGRATION.md](mac/docs/MIGRATION.md) 和 [windows/README.md](windows/README.md#从-windowsquotatray-迁移)。
@@ -89,7 +91,7 @@ macOS 快捷键：`⇧⌘B` 切换收纳栏，`⇧⌘Space` 搜索图标。
 macOS（在 `mac/` 下）：
 
 ```sh
-swift test --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+swift test --sdk "$(xcrun --show-sdk-path)" --triple arm64-apple-macosx26.0
 zsh build.sh          # 输出 dist/AI SubGauge.app 和 .zip
 ```
 

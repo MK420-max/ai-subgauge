@@ -8,7 +8,7 @@ if [[ -n "$level" && "$level" -le 20 ]]; then
   exit 20
 fi
 # Keep developer home/source paths out of distributable compiler metadata.
-swift build --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk "$@" -c release -debug-info-format none --scratch-path "$PWD/.build/release-build" \
+swift build --sdk "$(xcrun --show-sdk-path)" --triple arm64-apple-macosx26.0 "$@" -c release -debug-info-format none --scratch-path "$PWD/.build/release-build" \
   -Xswiftc -debug-prefix-map -Xswiftc "$HOME=/build" \
   -Xswiftc -debug-prefix-map -Xswiftc "$PWD=/src/AISubGauge" \
   -Xswiftc -file-prefix-map -Xswiftc "$HOME=/build" \

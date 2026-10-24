@@ -6,7 +6,7 @@
 
 See how much of your AI subscriptions is left, from the macOS menu bar or the Windows tray.
 
-[![macOS](https://img.shields.io/badge/macOS-27%2B-000000?logo=apple&logoColor=white)](mac/README.en.md)
+[![macOS](https://img.shields.io/badge/macOS-26%2B-000000?logo=apple&logoColor=white)](mac/README.en.md)
 [![Windows](https://img.shields.io/badge/Windows-tray-0078D6?logo=windows&logoColor=white)](windows/README.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)](#installation)
@@ -68,9 +68,11 @@ What each API key can show depends on the provider. See [mac/AI_SUPPORT.md](mac/
 
 ## Installation
 
+The app can be installed on macOS 26, but it has not yet been tested on a physical Mac running macOS 26; menu bar icon detection may differ.
+
 There are no prebuilt releases yet. Build from source (below), then:
 
-- **macOS 27 or later (Apple Silicon):** move `dist/AI SubGauge.app` to `/Applications`. Builds are ad hoc signed, not notarized, so Gatekeeper may ask you to approve the app. Icon organization needs Accessibility permission.
+- **macOS 26 or later (Apple Silicon):** move `dist/AI SubGauge.app` to `/Applications`. Builds are ad hoc signed, not notarized, so Gatekeeper may ask you to approve the app. Icon organization needs Accessibility permission.
 - **Windows:** copy the published files to `%LOCALAPPDATA%\Programs\AISubGauge\` and run `AISubGauge.exe`. No administrator rights are needed.
 
 Upgrading from Mac AI Bar Cleaner or WindowsQuotaTray: settings are migrated on first launch. See [mac/docs/MIGRATION.md](mac/docs/MIGRATION.md) and [windows/README.md](windows/README.md#migration-from-windowsquotatray).
@@ -89,7 +91,7 @@ macOS shortcuts: `⇧⌘B` toggles the collection bar, `⇧⌘Space` searches ic
 macOS (from `mac/`):
 
 ```sh
-swift test --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+swift test --sdk "$(xcrun --show-sdk-path)" --triple arm64-apple-macosx26.0
 zsh build.sh          # dist/AI SubGauge.app and .zip
 ```
 
