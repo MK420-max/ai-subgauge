@@ -2,7 +2,7 @@
 
 # AI SubGauge
 
-AI SubGauge 2.0.2 for Mac shows the remaining allowance of popular AI subscriptions, with menu bar icon organization built in. It is written in Swift, SwiftUI and AppKit; the interface supports English and Simplified Chinese.
+AI SubGauge 2.0.3 for Mac shows the remaining allowance of popular AI subscriptions, with menu bar icon organization built in. It is written in Swift, SwiftUI and AppKit; the interface supports English and Simplified Chinese.
 
 ## Features
 
@@ -96,7 +96,7 @@ zsh build.sh
 zsh package-dmg.sh
 ```
 
-Outputs: `dist/AI SubGauge.app`, `dist/AI SubGauge.zip`, and `dist/AI SubGauge-2.0.2-arm64.dmg`. Intermediate files remain in `.build/`. Packaging does not install or open the app. Additional Swift build options can be passed to `build.sh`; an existing DMG is never overwritten.
+Outputs: `dist/AI SubGauge.app`, `dist/AI SubGauge.zip`, and `dist/AI SubGauge-2.0.3-arm64.dmg`. Intermediate files remain in `.build/`. Packaging does not install or open the app. Additional Swift build options can be passed to `build.sh`; an existing DMG is never overwritten.
 
 In a restricted development sandbox, keep caches and temporary files in this checkout, and use a fresh module cache if this checkout was copied from another path:
 
@@ -135,7 +135,7 @@ If AI SubGauge is useful to you, a ⭐ on GitHub would be much appreciated.
 
 # AI SubGauge（简体中文）
 
-AI SubGauge 2.0.2 Mac 版用于查看常用 AI 订阅的剩余额度，并提供菜单栏图标收纳功能。应用使用 Swift、SwiftUI 和 AppKit 开发，界面支持英文和简体中文。
+AI SubGauge 2.0.3 Mac 版用于查看常用 AI 订阅的剩余额度，并提供菜单栏图标收纳功能。应用使用 Swift、SwiftUI 和 AppKit 开发，界面支持英文和简体中文。
 
 ## 功能
 
@@ -229,7 +229,7 @@ zsh build.sh
 zsh package-dmg.sh
 ```
 
-产物为 `dist/AI SubGauge.app`、`dist/AI SubGauge.zip` 和 `dist/AI SubGauge-2.0.2-arm64.dmg`，中间文件留在 `.build/`。打包不会安装或打开应用。`build.sh` 可接收额外 Swift 构建参数；已有 DMG 不会被覆盖。
+产物为 `dist/AI SubGauge.app`、`dist/AI SubGauge.zip` 和 `dist/AI SubGauge-2.0.3-arm64.dmg`，中间文件留在 `.build/`。打包不会安装或打开应用。`build.sh` 可接收额外 Swift 构建参数；已有 DMG 不会被覆盖。
 
 在受限沙箱中，将缓存及临时文件保留在本项目；如果项目从其他路径复制而来，使用新的模块缓存：
 

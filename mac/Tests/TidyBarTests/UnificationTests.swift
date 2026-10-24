@@ -28,9 +28,9 @@ final class UnificationTests {
         let mac = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let data = try Data(contentsOf: mac.appendingPathComponent("Resources/Info.plist"))
         let info = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
-        #expect(AppIdentifiers.version == "2.0.2")
+        #expect(AppIdentifiers.version == "2.0.3")
         #expect(info["CFBundleShortVersionString"] as? String == AppIdentifiers.version)
-        #expect(info["CFBundleVersion"] as? String == "202")
+        #expect(info["CFBundleVersion"] as? String == "203")
     }
 
     private func directory() throws -> URL {
@@ -215,7 +215,7 @@ final class UnificationTests {
         #expect(!text.contains("private-"))
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(Set(object.keys) == ["app", "version", "os", "providers"])
-        #expect(object["version"] as? String == "2.0.2")
+        #expect(object["version"] as? String == "2.0.3")
         #expect((object["providers"] as? [[String: String]])?.first?["state"] == "error")
     }
 

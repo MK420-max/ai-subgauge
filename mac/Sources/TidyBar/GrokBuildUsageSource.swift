@@ -242,10 +242,10 @@ enum GrokBuildUsageSource {
         log: @escaping (RenewalEvent) -> Void = RenewalEvent.log
     ) async throws -> Credential {
         try Task.checkCancellation()
-        let refreshed = try await GrokCredentialRenewals.shared.refresh(at: authURL.standardizedFileURL) {
+        let refreshed = try await GrokCredentialRenewals.shared.refresh(at: authURL.standardizedFileURL) { epoch in
             do {
                 return try await performRefresh(executable: executable, authURL: authURL, expected: expected,
-                    timeout: timeout, onLaunch: onLaunch, verifyCLI: verifyCLI, log: log)
+                    timeout: timeout, epoch: epoch, onLaunch: onLaunch, verifyCLI: verifyCLI, log: log)
             } catch {
                 log(.failed)
                 throw error
@@ -258,6 +258,7 @@ enum GrokBuildUsageSource {
     }
 
     private static func performRefresh(executable: URL, authURL: URL, expected: Credential, timeout: TimeInterval,
+        epoch: GrokRenewalEpoch,
         onLaunch: ((pid_t) -> Void)?, verifyCLI: ((URL) throws -> Void)?, log: @escaping (RenewalEvent) -> Void
     ) async throws -> Credential {
         guard expected.canRefresh else { throw AIUsageError.unavailable(L10n.text("error.your.grok.login.cannot.be.renewed.automatically")) }
@@ -271,13 +272,12 @@ enum GrokBuildUsageSource {
             if current.expiresAt > Date().addingTimeInterval(15) { return current }
             let prepared = try GrokCLITrust.prepare(executable, verifyCLI: verifyCLI)
             defer { prepared.cleanup() }
-            var restriction: Result<Void, Error> = .success(())
-            do {
-                // refreshWithCLI first terminates/reaps the entire group, including on failure.
-                defer { restriction = Result { try CredentialFiles.restrictAfterRenewal(at: authURL) } }
-                try refreshWithCLI(executable: prepared.executable, authURL: authURL, clientID: expected.clientID, timeout: timeout, onLaunch: onLaunch)
+            let refreshedCLI = Result {
+                try refreshWithCLI(executable: prepared.executable, authURL: authURL, clientID: expected.clientID,
+                    timeout: timeout, epoch: epoch, onLaunch: onLaunch)
             }
-            try restriction.get()
+            try epoch.finish(at: authURL)
+            try refreshedCLI.get()
             guard let refreshed = try readCredential(at: authURL), refreshed.userID == expected.userID,
                   refreshed.clientID == expected.clientID else {
                 throw AIUsageError.unavailable(L10n.text("error.grok.renewal.did.not.return.a.valid"))
@@ -292,7 +292,8 @@ enum GrokBuildUsageSource {
         } onCancel: { worker.cancel() }
     }
 
-    private static func refreshWithCLI(executable: URL, authURL: URL, clientID: String, timeout: TimeInterval, onLaunch: ((pid_t) -> Void)?) throws {
+    private static func refreshWithCLI(executable: URL, authURL: URL, clientID: String, timeout: TimeInterval,
+        epoch: GrokRenewalEpoch, onLaunch: ((pid_t) -> Void)?) throws {
         try Task.checkCancellation()
         let folder = executable.deletingLastPathComponent()
         let input = Pipe(), output = Pipe()
@@ -300,24 +301,44 @@ enum GrokBuildUsageSource {
         environment["GROK_HOME"] = folder.path; environment["GROK_AUTH_PATH"] = authURL.path
         environment["GROK_OAUTH2_CLIENT_ID"] = clientID
         _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
-        let process: CLIProcess
+        guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETFL, O_NONBLOCK) == 0 else { throw POSIXError(.EIO) }
+        let pid: pid_t
         do {
-            process = try CLIProcess(executable: executable, arguments: ["agent", "stdio"], environment: environment, directory: folder,
-                input: input.fileHandleForReading.fileDescriptor, output: output.fileHandleForWriting.fileDescriptor)
+            pid = try epoch.launch {
+                let process = try CLIProcess(executable: executable, arguments: ["agent", "stdio"], environment: environment, directory: folder,
+                    input: input.fileHandleForReading.fileDescriptor, output: output.fileHandleForWriting.fileDescriptor)
+                return GrokRenewalEpoch.Child(pid: process.processIdentifier,
+                    stop: { _ in try process.stopRecordedChild() }, cleanup: { try process.stopRecordedChild() })
+            }
         } catch { throw AIUsageError.unavailable(L10n.text("error.could.not.start.the.official.grok.renewal")) }
         try? input.fileHandleForReading.close(); try? output.fileHandleForWriting.close()
         defer {
             try? input.fileHandleForWriting.close()
-            process.terminateAndWait(); try? output.fileHandleForReading.close()
+            try? output.fileHandleForReading.close()
         }
-        onLaunch?(process.processIdentifier)
-        let deadline = Date().addingTimeInterval(timeout)
+        onLaunch?(pid)
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
         var buffer = Data(), total = 0
         func request(_ id: Int, _ method: String, _ params: [String: Any]) throws {
             try Task.checkCancellation()
             var message = try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": id, "method": method, "params": params])
-            message.append(10); try input.fileHandleForWriting.write(contentsOf: message)
-            while Date() < deadline {
+            message.append(10)
+            var sent = 0
+            while sent < message.count {
+                try Task.checkCancellation()
+                guard ProcessInfo.processInfo.systemUptime < deadline else { throw AIUsageError.timeout }
+                let count = try epoch.withCurrent {
+                    message.withUnsafeBytes { bytes in
+                        Darwin.write(input.fileHandleForWriting.fileDescriptor, bytes.baseAddress!.advanced(by: sent), message.count - sent)
+                    }
+                }
+                if count > 0 { sent += count }
+                else if count < 0 && [EAGAIN, EINTR].contains(errno) {
+                    var writable = pollfd(fd: input.fileHandleForWriting.fileDescriptor, events: Int16(POLLOUT), revents: 0)
+                    _ = poll(&writable, 1, 50)
+                } else { throw POSIXError(.EIO) }
+            }
+            while ProcessInfo.processInfo.systemUptime < deadline {
                 try Task.checkCancellation()
                 if let end = buffer.firstIndex(of: 10) {
                     let line = buffer.prefix(upTo: end); buffer.removeSubrange(...end)
@@ -365,11 +386,105 @@ private final class GrokBuildRedirectBlocker: NSObject, URLSessionTaskDelegate {
     }
 }
 
+/// Revocation fences new work; active work and cleanup never hold the state lock.
+final class GrokRenewalEpoch: @unchecked Sendable {
+    struct Child {
+        let pid: pid_t
+        let stop: (pid_t) throws -> Void
+        let cleanup: () throws -> Void
+    }
+    private let lock = NSLock()
+    private let cleanupLock = NSLock()
+    private let quiesced = DispatchSemaphore(value: 0)
+    private let restore: @Sendable (URL) throws -> Void
+    private var current = true
+    private var active = 0
+    private var child: Child?
+    private var failure: Error?
+    var cleanupFailure: Error? { lock.withLock { failure } }
+
+    init(restore: @escaping @Sendable (URL) throws -> Void = { try CredentialFiles.restrictAfterRenewal(at: $0) }) {
+        self.restore = restore
+    }
+
+    func withCurrent<T>(_ operation: () throws -> T) throws -> T {
+        try lock.withLock {
+            guard current else { throw CancellationError() }
+            active += 1
+        }
+        defer {
+            lock.withLock {
+                active -= 1
+                if !current && active == 0 { quiesced.signal() }
+            }
+        }
+        return try operation()
+    }
+
+    func launch(_ spawn: () throws -> Child) throws -> pid_t {
+        try withCurrent {
+            let launched = try spawn()
+            lock.withLock { child = launched }
+            return launched.pid
+        }
+    }
+
+    func finish(at url: URL) throws {
+        do {
+            try withCurrent {
+                try cleanupLock.withLock {
+                    let recorded = lock.withLock { child }
+                    try recorded?.cleanup()
+                    lock.withLock { child = nil }
+                    try withCurrent { try restore(url) }
+                }
+            }
+        } catch {
+            if !(error is CancellationError) {
+                lock.withLock { current = false; failure = error }
+            }
+            throw error
+        }
+    }
+
+    func revoke() { lock.withLock { current = false } }
+
+    func abandon(at url: URL) throws {
+        revoke()
+        // Stop an already recorded writer even if another epoch operation is stuck.
+        // Serialize against finish(), which may still be stopping the same child.
+        try? cleanupLock.withLock { try stopChild() }
+        // The actor bounds callers with cleanupWaitTimeout and keeps the store locked.
+        // Continue cleanup after that deadline: an in-flight spawn may record its child late.
+        while lock.withLock({ active != 0 }) {
+            quiesced.wait()
+        }
+        try cleanupLock.withLock {
+            // A failed first stop, or a late spawn, still requires a confirmed stop.
+            do { try stopChild() }
+            catch { try stopChild() }
+            // Never restore or admit a fresh writer after an unconfirmed stop.
+            do { try restore(url) }
+            catch { try restore(url) }
+        }
+    }
+
+    private func stopChild() throws {
+        guard let recorded = lock.withLock({ child }) else { return }
+        try recorded.stop(recorded.pid)
+        lock.withLock {
+            if child?.pid == recorded.pid { child = nil }
+        }
+    }
+}
+
 /// One renewal per official store; each caller owns only its continuation.
 actor GrokCredentialRenewals {
     static let shared = GrokCredentialRenewals()
     private let cancellationCleanupTimeout: UInt64
     private let cleanupWaitTimeout: UInt64
+    private let restore: @Sendable (URL) throws -> Void
+    typealias Operation = (GrokRenewalEpoch) async throws -> GrokBuildUsageSource.Credential
     struct Cancellation {
         let waiter: CheckedContinuation<GrokBuildUsageSource.Credential, Error>
         let timeout: Task<Void, Never>
@@ -377,35 +492,43 @@ actor GrokCredentialRenewals {
     struct Entry {
         let id: UUID
         let task: Task<Void, Never>
+        let epoch: GrokRenewalEpoch
         var waiters: [UUID: CheckedContinuation<GrokBuildUsageSource.Credential, Error>]
         var cancellations: [UUID: Cancellation] = [:]
         var queued: [UUID: QueuedWaiter] = [:]
+        var abandoned = false
+        var cleanupError: Error?
+        var abandonmentTimeout: Task<Void, Never>?
     }
     struct QueuedWaiter {
         let waiter: CheckedContinuation<GrokBuildUsageSource.Credential, Error>
-        let operation: () async throws -> GrokBuildUsageSource.Credential
+        let operation: Operation
         let timeout: Task<Void, Never>
     }
     private(set) var pending: [URL: Entry] = [:]
 
-    init(cancellationCleanupTimeout: UInt64 = 3_000_000_000, cleanupWaitTimeout: UInt64 = 20_000_000_000) {
+    init(cancellationCleanupTimeout: UInt64 = 3_000_000_000,
+        cleanupWaitTimeout: UInt64 = 20_000_000_000,
+        restore: @escaping @Sendable (URL) throws -> Void = { try CredentialFiles.restrictAfterRenewal(at: $0) }
+    ) {
         self.cancellationCleanupTimeout = cancellationCleanupTimeout
         self.cleanupWaitTimeout = cleanupWaitTimeout
+        self.restore = restore
     }
 
-    func refresh(at url: URL, operation: @escaping () async throws -> GrokBuildUsageSource.Credential) async throws -> GrokBuildUsageSource.Credential {
+    func refresh(at url: URL, operation: @escaping Operation) async throws -> GrokBuildUsageSource.Credential {
         try Task.checkCancellation()
         let waiterID = UUID()
-        let result = try await withTaskCancellationHandler {
+        let result: GrokBuildUsageSource.Credential = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                if let entry = pending[url], entry.task.isCancelled {
-                    // Wait for actual cleanup even past the cancellation deadline. Bound each
-                    // queued wait to 20s by default; a stuck worker must not cause overlapping renewals.
+                if let error = pending[url]?.cleanupError {
+                    continuation.resume(throwing: error)
+                } else if let entry = pending[url], entry.task.isCancelled {
                     let entryID = entry.id
                     let timeout = Task {
                         do { try await Task.sleep(nanoseconds: cleanupWaitTimeout) }
                         catch { return }
-                        finishQueuedWaiter(at: url, entryID: entryID, waiterID: waiterID)
+                        expireQueued(at: url, entryID: entryID, waiterID: waiterID)
                     }
                     pending[url]?.queued[waiterID] = QueuedWaiter(waiter: continuation, operation: operation, timeout: timeout)
                 } else if pending[url] == nil {
@@ -422,16 +545,16 @@ actor GrokCredentialRenewals {
     }
 
     private func start(at url: URL, waiters: [UUID: CheckedContinuation<GrokBuildUsageSource.Credential, Error>],
-        operation: @escaping () async throws -> GrokBuildUsageSource.Credential
+        operation: @escaping Operation
     ) {
-        let id = UUID()
+        let id = UUID(), epoch = GrokRenewalEpoch(restore: restore)
         let task = Task {
             let result: Result<GrokBuildUsageSource.Credential, Error>
-            do { result = .success(try await operation()) }
+            do { result = .success(try await operation(epoch)) }
             catch { result = .failure(error) }
             finish(at: url, id: id, result: result)
         }
-        pending[url] = Entry(id: id, task: task, waiters: waiters)
+        pending[url] = Entry(id: id, task: task, epoch: epoch, waiters: waiters)
     }
 
     private func cancelWaiter(at url: URL, id: UUID) {
@@ -447,16 +570,16 @@ actor GrokCredentialRenewals {
         }
         entry.task.cancel()
         let entryID = entry.id
-        // Suspending the timer leaves the actor free to run finish() after worker cleanup.
         let timeout = Task {
             do { try await Task.sleep(nanoseconds: cancellationCleanupTimeout) }
             catch { return }
             finishCancellation(at: url, entryID: entryID, waiterID: id)
+            abandon(at: url, id: entryID)
         }
         pending[url]?.cancellations[id] = Cancellation(waiter: waiter, timeout: timeout)
     }
 
-    private func finishQueuedWaiter(at url: URL, entryID: UUID, waiterID: UUID) {
+    private func expireQueued(at url: URL, entryID: UUID, waiterID: UUID) {
         guard pending[url]?.id == entryID,
               let queued = pending[url]?.queued.removeValue(forKey: waiterID) else { return }
         queued.waiter.resume(throwing: AIUsageError.timeout)
@@ -468,8 +591,70 @@ actor GrokCredentialRenewals {
         cancellation.waiter.resume(throwing: CancellationError())
     }
 
+    private func abandon(at url: URL, id: UUID) {
+        guard let entry = pending[url], entry.id == id, !entry.abandoned else { return }
+        pending[url]?.abandoned = true
+        let epoch = entry.epoch
+        epoch.revoke()
+        // Also bound a stuck stop/restore hook, without waiting for the blocking worker to return.
+        pending[url]?.abandonmentTimeout = Task {
+            do { try await Task.sleep(nanoseconds: cleanupWaitTimeout) }
+            catch { return }
+            finishAbandonment(at: url, id: id, result: .failure(AIUsageError.timeout))
+        }
+        // Capture only the Sendable epoch, never the Entry or its continuations.
+        Task.detached(priority: .utility) {
+            let result = Result { try epoch.abandon(at: url) }
+            await self.finishAbandonment(at: url, id: id, result: result)
+        }
+    }
+
+    private func finishAbandonment(at url: URL, id: UUID, result: Result<Void, Error>) {
+        guard let entry = pending[url], entry.id == id, entry.cleanupError == nil else { return }
+        entry.abandonmentTimeout?.cancel()
+        switch result {
+        case .success:
+            pending[url] = nil
+            startQueued(at: url, entry: entry)
+        case .failure(let error):
+            // Fail closed for later callers too; late finish() cannot reopen an unsafe store.
+            pending[url]?.cleanupError = error
+            pending[url]?.queued.removeAll()
+            for queued in entry.queued.values {
+                queued.timeout.cancel()
+                queued.waiter.resume(throwing: error)
+            }
+        }
+    }
+
+    private func startQueued(at url: URL, entry: Entry) {
+        for queued in entry.queued.values { queued.timeout.cancel() }
+        if let next = entry.queued.values.first {
+            start(at: url, waiters: entry.queued.mapValues(\.waiter), operation: next.operation)
+        }
+    }
+
     private func finish(at url: URL, id: UUID, result: Result<GrokBuildUsageSource.Credential, Error>) {
-        guard let entry = pending[url], entry.id == id else { return }
+        guard let entry = pending[url], entry.id == id, !entry.abandoned else { return }
+        if let error = entry.epoch.cleanupFailure {
+            pending[url]?.cleanupError = error
+            for cancellation in entry.cancellations.values {
+                cancellation.timeout.cancel()
+                cancellation.waiter.resume(throwing: CancellationError())
+            }
+            pending[url]?.cancellations.removeAll()
+            for waiter in entry.waiters.values { waiter.resume(throwing: error) }
+            pending[url]?.waiters.removeAll()
+            for queued in entry.queued.values {
+                queued.timeout.cancel()
+                queued.waiter.resume(throwing: error)
+            }
+            pending[url]?.queued.removeAll()
+            // Fail callers promptly, then compensate stop/restore off the actor.
+            // cleanupError retains the store lock even if this cleanup completes late.
+            abandon(at: url, id: id)
+            return
+        }
         pending[url] = nil
         // Both completion paths take ownership on this actor, so each waiter resumes once.
         for cancellation in entry.cancellations.values {
@@ -477,9 +662,6 @@ actor GrokCredentialRenewals {
             cancellation.waiter.resume(throwing: CancellationError())
         }
         for waiter in entry.waiters.values { waiter.resume(with: result) }
-        for queued in entry.queued.values { queued.timeout.cancel() }
-        if let next = entry.queued.values.first {
-            start(at: url, waiters: entry.queued.mapValues(\.waiter), operation: next.operation)
-        }
+        startQueued(at: url, entry: entry)
     }
 }
