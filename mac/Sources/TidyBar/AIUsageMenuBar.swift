@@ -143,11 +143,11 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
     private let running = RunningAIStore()
     private var statusItem: NSStatusItem?
     private var statusButtonRegistration: UUID?
-    private var appearanceObservation: NSKeyValueObservation?
+    private var appearanceObservation: AnyCancellable?
     private var subscriptions: Set<AnyCancellable> = []
     private var timer: Timer?
     private var started = false
-    private var lastRenderKey: AIUsageMenuBarRenderKey?
+    private let updates = AIUsageMenuBarUpdates()
     var panel: AIUsagePanel { PopupManager.shared.panel }
     var themeOverride: AppTheme?
     private var presentationSnapshots: [AIUsageSnapshot] {
@@ -163,15 +163,25 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
     func start(observeRunning: Bool = true) {
         guard !started else { return }
         started = true
-        running.$active.sink { [weak self] active in self?.store.runningProviders = active }.store(in: &subscriptions)
-        store.$runningProviders.sink { [weak self] _ in Task { @MainActor in self?.update() } }.store(in: &subscriptions)
-        if observeRunning { running.start() }
-        store.$snapshots.sink { [weak self] _ in Task { @MainActor in self?.update() } }.store(in: &subscriptions)
-        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).sink { [weak self] _ in
-            Task { @MainActor in self?.update() }
+        running.$active.removeDuplicates().sink { [weak self] active in
+            guard let self, self.store.runningProviders != active else { return }
+            self.store.runningProviders = active
         }.store(in: &subscriptions)
-        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in Task { @MainActor in self?.update() } }
+        store.$runningProviders.removeDuplicates().sink { [weak self] _ in self?.requestUpdate() }.store(in: &subscriptions)
+        if observeRunning { running.start() }
+        store.$snapshots.removeDuplicates().sink { [weak self] _ in self?.requestUpdate() }.store(in: &subscriptions)
+        store.subscriptionPreferences.changes.map(\.display).removeDuplicates().dropFirst()
+            .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.requestUpdate() }.store(in: &subscriptions)
+        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.requestUpdate() }
+        }
+        timer?.tolerance = 1
         update()
+    }
+
+    private func requestUpdate() {
+        guard started else { return }
+        updates.request { [weak self] in self?.update() }
     }
 
     func stop() {
@@ -189,7 +199,7 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
         appearanceObservation = nil
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
         statusItem = nil
-        lastRenderKey = nil
+        updates.reset()
     }
 
     private func update() {
@@ -216,11 +226,9 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
             item.isVisible = true
             statusItem = item
             if let button = item.button { statusButtonRegistration = PopupManager.shared.registerStatusButton(button) }
-            appearanceObservation = item.button?.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
-                Task { @MainActor in
-                    self?.lastRenderKey = nil
-                    self?.update()
-                }
+            if let button = item.button {
+                appearanceObservation = AIUsageMenuBarUpdates.appearanceChanges(of: button)
+                    .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.requestUpdate() }
             }
         }
         // The button can differ from NSApp, including on the very first render.
@@ -231,12 +239,11 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
             colorsByQuota: preferences.colorsByQuota,
             placement: AIUsageMenuBarPreference.percentagePlacement(defaults: preferences.defaults), appearance: appearance.name)
         let idle = key.idle
-        if lastRenderKey != key {
-            // Set the key before AppKit setters can emit defaults/appearance notifications.
-            lastRenderKey = key
-            let image = idle ? AppBrand.idleImage() : QuotaMenuImage.bitmapImage(snapshots: snapshots,
+        if let image = updates.image(for: key, render: {
+            idle ? AppBrand.idleImage() : QuotaMenuImage.bitmapImage(snapshots: snapshots,
                 showPercentage: key.showPercentage, colorsByQuota: key.colorsByQuota,
                 placement: key.placement, appearance: appearance)
+        }) {
             statusItem?.button?.image = image
             if statusItem?.length != image.size.width { statusItem?.length = image.size.width }
             let tint: NSColor? = idle ? .secondaryLabelColor : nil
@@ -400,12 +407,12 @@ final class AIUsageMenuBarController: NSObject, NSMenuDelegate {
     @objc private func toggleProvider(_ sender: NSMenuItem) {
         guard let key = sender.representedObject as? String, let provider = AIUsageProvider(rawValue: key) else { return }
         AIVisibilityPreferences.setSelected(!store.selectedProviders.contains(key), provider: provider)
-        update()
+        requestUpdate()
     }
-    @objc private func resetProviders() { UserDefaults.standard.removeObject(forKey: AIVisibilityPreferences.selectionKey); update() }
+    @objc private func resetProviders() { UserDefaults.standard.removeObject(forKey: AIVisibilityPreferences.selectionKey); requestUpdate() }
     @objc private func toggleAlways() {
         UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: AIVisibilityPreferences.alwaysShowKey), forKey: AIVisibilityPreferences.alwaysShowKey)
-        update()
+        requestUpdate()
     }
     @objc private func openSettings() { closePanel(); AppActions.shared.showSettings() }
     func openPanelSettings() { closePanel(); AppActions.shared.showSettings(.panel) }
