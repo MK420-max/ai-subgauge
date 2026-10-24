@@ -1,0 +1,68 @@
+﻿AppTitle|AI SubGauge|AI SubGauge
+Remaining|剩余额度|Remaining quota
+ShowTrayPercentage|托盘显示百分比|Show percentage in tray
+Windows|5 小时 / 每周|5 hours / Weekly
+FiveHour|5 小时|5 hours
+Weekly|每周|Weekly
+Refresh|刷新|Refresh
+RefreshNow|立即刷新|Refresh now
+Refreshing|正在刷新…|Refreshing…
+Settings|设置|Settings
+Exit|退出|Quit
+Close|关闭|Close
+Subscriptions|AI 订阅|AI subscriptions
+General|通用|General
+SubsDescription|查看账户余量和重置时间，选择托盘显示的订阅。|View quota and reset times; choose subscriptions for the tray.
+GeneralDescription|设置语言、外观和启动行为。|Choose language, appearance and startup behavior.
+TrayShow|托盘显示|Show in tray
+Language|语言|Language
+Theme|主题|Theme
+FollowSystem|跟随系统|Follow system
+Chinese|简体中文|简体中文
+English|English|English
+Light|浅色|Light
+Dark|深色|Dark
+AlwaysShow|始终显示|Always show
+AlwaysHint|关闭后，仅显示正在运行的 AI，退出后保留 30 秒。|When off, hide inactive AI apps after a 30-second grace period.
+Autostart|开机自启动|Launch at sign-in
+AutostartHint|登录 Windows 时自动启动 AI SubGauge 2。|Start AI SubGauge 2 when you sign in to Windows.
+ResetHours|{0} 小时后重置|Resets in {0} hours
+ResetMinutes|{0} 分钟后重置|Resets in {0} minutes
+ResetNow|即将重置|Reset due
+ResetUnknown|重置时间未提供|Reset time unavailable
+Updated|更新于 {0}|Updated at {0}
+NotUpdated|尚未更新|Not updated yet
+Connected|已连接 · 剩余 {0}|Connected · {0} remaining
+Empty|未检测到正在运行的 AI。可在设置中开启“始终显示”。|No running AI detected. Enable Always show in Settings.
+Demo|示例数据|Demo data
+FaultNone|已连接|Connected
+FaultSignIn|请在对应应用中登录|Sign in to the corresponding app
+FaultNetwork|连接失败，请稍后刷新|Connection failed; try refreshing later
+FaultInvalidData|额度数据暂不可用|Quota data is unavailable
+FaultRefreshFailed|续期失败，请在 Grok CLI 重新登录|Refresh failed; sign in to Grok CLI again
+FaultTimeout|请求超时，请稍后刷新|Request timed out; try again later
+FaultCacheExpired|缓存已过期，请在 Grok Bot 更新用量|Cache expired; refresh usage in Grok Bot
+FaultNotAvailable|尚未读取额度|Quota has not been loaded
+SaveFailed|设置未能保存，请检查文件权限。|Could not save settings. Check file permissions.
+StartupFailed|程序无法启动，请检查设置目录权限。|Could not start. Check settings folder permissions.
+ScreenshotFailed|截图未完成，请检查屏幕会话和输出目录。|Capture failed. Check the desktop session and output folder.
+InvalidArguments|命令行参数无效，请参阅 README。|Invalid command-line options. See README.
+AlreadyRunning|AI SubGauge 2 已在运行。|AI SubGauge 2 is already running.
+Codex|Codex|Codex
+Claude|Claude|Claude
+Grok|Grok Bot|Grok Bot
+PlanUnknown|套餐未知|Unknown plan
+PlanPlus|Plus|Plus
+PlanPro|Pro|Pro
+PlanMax|Max|Max
+PlanSuperGrok|SuperGrok|SuperGrok
+PlanSuperGrokHeavy|SuperGrok Heavy|SuperGrok Heavy
+PlanTeam|Team|Team
+PlanEnterprise|Enterprise|Enterprise
+PlanFree|Free|Free
+ResetHour|1 小时后重置|Resets in 1 hour
+ResetMinute|1 分钟后重置|Resets in 1 minute
+AllowUnsignedCodexNpm|允许未签名的 Codex CLI（npm）|Allow unsigned Codex CLI (npm)
+Unsigned|未签名|Unsigned
+FaultVerificationFailed|CLI 验证失败。|CLI verification failed.
+FaultVerifierUnresponsive|签名校验未响应，请重启 AI SubGauge|Signature check is not responding. Please restart AI SubGauge.

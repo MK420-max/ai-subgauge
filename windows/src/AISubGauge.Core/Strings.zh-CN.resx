@@ -1,0 +1,199 @@
+<root>
+  <data name="AppTitle" xml:space="preserve">
+    <value>AI SubGauge</value>
+  </data>
+  <data name="Remaining" xml:space="preserve">
+    <value>剩余额度</value>
+  </data>
+  <data name="Windows" xml:space="preserve">
+    <value>5 小时 / 每周</value>
+  </data>
+  <data name="FiveHour" xml:space="preserve">
+    <value>5 小时</value>
+  </data>
+  <data name="Weekly" xml:space="preserve">
+    <value>每周</value>
+  </data>
+  <data name="Refresh" xml:space="preserve">
+    <value>刷新</value>
+  </data>
+  <data name="RefreshNow" xml:space="preserve">
+    <value>立即刷新</value>
+  </data>
+  <data name="Refreshing" xml:space="preserve">
+    <value>正在刷新…</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>设置</value>
+  </data>
+  <data name="Exit" xml:space="preserve">
+    <value>退出</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>关闭</value>
+  </data>
+  <data name="Subscriptions" xml:space="preserve">
+    <value>AI 订阅</value>
+  </data>
+  <data name="General" xml:space="preserve">
+    <value>通用</value>
+  </data>
+  <data name="SubsDescription" xml:space="preserve">
+    <value>查看账户余量和重置时间，选择托盘显示的订阅。</value>
+  </data>
+  <data name="GeneralDescription" xml:space="preserve">
+    <value>设置语言、外观和启动行为。</value>
+  </data>
+  <data name="TrayShow" xml:space="preserve">
+    <value>托盘显示</value>
+  </data>
+  <data name="Language" xml:space="preserve">
+    <value>语言</value>
+  </data>
+  <data name="Theme" xml:space="preserve">
+    <value>主题</value>
+  </data>
+  <data name="FollowSystem" xml:space="preserve">
+    <value>跟随系统</value>
+  </data>
+  <data name="Chinese" xml:space="preserve">
+    <value>简体中文</value>
+  </data>
+  <data name="English" xml:space="preserve">
+    <value>English</value>
+  </data>
+  <data name="Light" xml:space="preserve">
+    <value>浅色</value>
+  </data>
+  <data name="Dark" xml:space="preserve">
+    <value>深色</value>
+  </data>
+  <data name="AlwaysShow" xml:space="preserve">
+    <value>始终显示</value>
+  </data>
+  <data name="AlwaysHint" xml:space="preserve">
+    <value>关闭后，仅显示正在运行的 AI，退出后保留 30 秒。</value>
+  </data>
+  <data name="Autostart" xml:space="preserve">
+    <value>开机自启动</value>
+  </data>
+  <data name="AutostartHint" xml:space="preserve">
+    <value>登录 Windows 时自动启动 AI SubGauge 2。</value>
+  </data>
+  <data name="ResetHours" xml:space="preserve">
+    <value>{0} 小时后重置</value>
+  </data>
+  <data name="ResetMinutes" xml:space="preserve">
+    <value>{0} 分钟后重置</value>
+  </data>
+  <data name="ResetNow" xml:space="preserve">
+    <value>即将重置</value>
+  </data>
+  <data name="ResetUnknown" xml:space="preserve">
+    <value>重置时间未提供</value>
+  </data>
+  <data name="Updated" xml:space="preserve">
+    <value>更新于 {0}</value>
+  </data>
+  <data name="NotUpdated" xml:space="preserve">
+    <value>尚未更新</value>
+  </data>
+  <data name="Connected" xml:space="preserve">
+    <value>已连接 · 剩余 {0}</value>
+  </data>
+  <data name="Empty" xml:space="preserve">
+    <value>未检测到正在运行的 AI。可在设置中开启“始终显示”。</value>
+  </data>
+  <data name="Demo" xml:space="preserve">
+    <value>示例数据</value>
+  </data>
+  <data name="FaultNone" xml:space="preserve">
+    <value>已连接</value>
+  </data>
+  <data name="FaultSignIn" xml:space="preserve">
+    <value>请在对应应用中登录</value>
+  </data>
+  <data name="FaultNetwork" xml:space="preserve">
+    <value>连接失败，请稍后刷新</value>
+  </data>
+  <data name="FaultInvalidData" xml:space="preserve">
+    <value>额度数据暂不可用</value>
+  </data>
+  <data name="FaultRefreshFailed" xml:space="preserve">
+    <value>续期失败，请在 Grok CLI 重新登录</value>
+  </data>
+  <data name="FaultTimeout" xml:space="preserve">
+    <value>请求超时，请稍后刷新</value>
+  </data>
+  <data name="FaultCacheExpired" xml:space="preserve">
+    <value>缓存已过期，请在 Grok Bot 更新用量</value>
+  </data>
+  <data name="FaultNotAvailable" xml:space="preserve">
+    <value>尚未读取额度</value>
+  </data>
+  <data name="SaveFailed" xml:space="preserve">
+    <value>设置未能保存，请检查文件权限。</value>
+  </data>
+  <data name="StartupFailed" xml:space="preserve">
+    <value>程序无法启动，请检查设置目录权限。</value>
+  </data>
+  <data name="ScreenshotFailed" xml:space="preserve">
+    <value>截图未完成，请检查屏幕会话和输出目录。</value>
+  </data>
+  <data name="InvalidArguments" xml:space="preserve">
+    <value>命令行参数无效，请参阅 README。</value>
+  </data>
+  <data name="AlreadyRunning" xml:space="preserve">
+    <value>AI SubGauge 2 已在运行。</value>
+  </data>
+  <data name="Codex" xml:space="preserve">
+    <value>Codex</value>
+  </data>
+  <data name="Claude" xml:space="preserve">
+    <value>Claude</value>
+  </data>
+  <data name="Grok" xml:space="preserve">
+    <value>Grok Bot</value>
+  </data>
+  <data name="PlanUnknown" xml:space="preserve">
+    <value>套餐未知</value>
+  </data>
+  <data name="PlanPlus" xml:space="preserve">
+    <value>Plus</value>
+  </data>
+  <data name="PlanPro" xml:space="preserve">
+    <value>Pro</value>
+  </data>
+  <data name="PlanMax" xml:space="preserve">
+    <value>Max</value>
+  </data>
+  <data name="PlanSuperGrok" xml:space="preserve">
+    <value>SuperGrok</value>
+  </data>
+  <data name="PlanSuperGrokHeavy" xml:space="preserve">
+    <value>SuperGrok Heavy</value>
+  </data>
+  <data name="PlanTeam" xml:space="preserve">
+    <value>Team</value>
+  </data>
+  <data name="PlanEnterprise" xml:space="preserve">
+    <value>Enterprise</value>
+  </data>
+  <data name="PlanFree" xml:space="preserve">
+    <value>Free</value>
+  </data>
+  <data name="ResetHour" xml:space="preserve">
+    <value>1 小时后重置</value>
+  </data>
+  <data name="ResetMinute" xml:space="preserve">
+    <value>1 分钟后重置</value>
+  </data>
+<data name="AutostartFailed" xml:space="preserve"><value>无法更新开机启动，请再次切换重试。</value></data>
+<data name="CustomCodexPath" xml:space="preserve"><value>正在使用自定义 Codex 路径</value></data>
+<data name="CustomGrokPath" xml:space="preserve"><value>正在使用自定义 Grok 路径</value></data>
+<data name="AllowUnsignedCodexNpm" xml:space="preserve"><value>允许未签名的 Codex CLI（npm）</value></data>
+<data name="Unsigned" xml:space="preserve"><value>未签名</value></data>
+<data name="FaultVerificationFailed" xml:space="preserve"><value>CLI 验证失败。</value></data>
+<data name="FaultVerifierUnresponsive" xml:space="preserve"><value>签名校验未响应，请重启 AI SubGauge</value></data>
+<data name="ShowTrayPercentage" xml:space="preserve"><value>托盘显示百分比</value></data>
+</root>

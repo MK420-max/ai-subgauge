@@ -1,21 +1,10 @@
-**/bin/
-**/obj/
-publish/
-tests/artifacts/
+design.zip
+bin/
+obj/
+artifacts/
+*.log
 
-# Credentials, private exports and local configuration must never be published.
-.env
-.env.*
-**/auth.json
-**/.credentials.json
-**/oauth_creds.json
-**/credentials/
-**/*.key
-**/*.pem
-**/*.pfx
-**/*.p12
-**/*.log
-**/cookies*
-**/settings.json
-**/*diagnostics*.txt
-**/*diagnostics*.json
+.dotnethome/
+.nuget/
+codex-run*.txt
+
