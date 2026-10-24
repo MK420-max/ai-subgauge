@@ -368,10 +368,16 @@ private final class GrokBuildRedirectBlocker: NSObject, URLSessionTaskDelegate {
 /// One renewal per official store; each caller owns only its continuation.
 actor GrokCredentialRenewals {
     static let shared = GrokCredentialRenewals()
+    private static let cancellationCleanupTimeout: UInt64 = 3_000_000_000
+    struct Cancellation {
+        let waiter: CheckedContinuation<GrokBuildUsageSource.Credential, Error>
+        let timeout: Task<Void, Never>
+    }
     struct Entry {
         let id: UUID
         let task: Task<Void, Never>
         var waiters: [UUID: CheckedContinuation<GrokBuildUsageSource.Credential, Error>]
+        var cancellations: [UUID: Cancellation] = [:]
     }
     private(set) var pending: [URL: Entry] = [:]
 
@@ -401,14 +407,36 @@ actor GrokCredentialRenewals {
 
     private func cancelWaiter(at url: URL, id: UUID) {
         guard let waiter = pending[url]?.waiters.removeValue(forKey: id) else { return }
-        waiter.resume(throwing: CancellationError())
-        if pending[url]?.waiters.isEmpty == true { pending[url]?.task.cancel() }
-        // Keep the entry until the worker finishes, including subprocess cleanup.
+        guard let entry = pending[url], entry.waiters.isEmpty else {
+            waiter.resume(throwing: CancellationError())
+            return
+        }
+        entry.task.cancel()
+        let entryID = entry.id
+        // Suspending the timer leaves the actor free to run finish() after worker cleanup.
+        let timeout = Task {
+            do { try await Task.sleep(nanoseconds: Self.cancellationCleanupTimeout) }
+            catch { return }
+            finishCancellation(at: url, entryID: entryID, waiterID: id)
+        }
+        pending[url]?.cancellations[id] = Cancellation(waiter: waiter, timeout: timeout)
+        // New callers still join this entry until cleanup finishes, even after the deadline.
+    }
+
+    private func finishCancellation(at url: URL, entryID: UUID, waiterID: UUID) {
+        guard pending[url]?.id == entryID,
+              let cancellation = pending[url]?.cancellations.removeValue(forKey: waiterID) else { return }
+        cancellation.waiter.resume(throwing: CancellationError())
     }
 
     private func finish(at url: URL, id: UUID, result: Result<GrokBuildUsageSource.Credential, Error>) {
         guard let entry = pending[url], entry.id == id else { return }
         pending[url] = nil
+        // Both completion paths take ownership on this actor, so each waiter resumes once.
+        for cancellation in entry.cancellations.values {
+            cancellation.timeout.cancel()
+            cancellation.waiter.resume(throwing: CancellationError())
+        }
         for waiter in entry.waiters.values { waiter.resume(with: result) }
     }
 }
