@@ -196,4 +196,6 @@
 <data name="FaultVerificationFailed" xml:space="preserve"><value>CLI verification failed.</value></data>
 <data name="FaultVerifierUnresponsive" xml:space="preserve"><value>Signature check is not responding. Please restart AI SubGauge.</value></data>
 <data name="ShowTrayPercentage" xml:space="preserve"><value>Show percentage in tray</value></data>
+<data name="SignInExpired" xml:space="preserve"><value>{0} sign-in expired</value></data>
+<data name="SignInAgain" xml:space="preserve"><value>Sign in again</value></data>
 </root>

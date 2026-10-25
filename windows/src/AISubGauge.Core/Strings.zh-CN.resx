@@ -196,4 +196,6 @@
 <data name="FaultVerificationFailed" xml:space="preserve"><value>CLI 验证失败。</value></data>
 <data name="FaultVerifierUnresponsive" xml:space="preserve"><value>签名校验未响应，请重启 AI SubGauge</value></data>
 <data name="ShowTrayPercentage" xml:space="preserve"><value>托盘显示百分比</value></data>
+<data name="SignInExpired" xml:space="preserve"><value>{0} 登录已过期</value></data>
+<data name="SignInAgain" xml:space="preserve"><value>重新登录</value></data>
 </root>

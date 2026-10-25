@@ -37,6 +37,8 @@ Empty|未检测到正在运行的 AI。可在设置中开启“始终显示”�
 Demo|示例数据|Demo data
 FaultNone|已连接|Connected
 FaultSignIn|请在对应应用中登录|Sign in to the corresponding app
+SignInExpired|{0} 登录已过期|{0} sign-in expired
+SignInAgain|重新登录|Sign in again
 FaultNetwork|连接失败，请稍后刷新|Connection failed; try refreshing later
 FaultInvalidData|额度数据暂不可用|Quota data is unavailable
 FaultRefreshFailed|续期失败，请在 Grok CLI 重新登录|Refresh failed; sign in to Grok CLI again

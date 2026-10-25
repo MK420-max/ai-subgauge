@@ -159,6 +159,18 @@ capture-{theme}-{lang}.json
 
 构建期间不运行安装器，不操作现有 1.2.0，也不使用真实账户做自动验收。自动测试结果见 `artifacts/test-results.txt`；截图与实际安装需单独人工验收。
 
+## Grok 登录过期与诊断
+
+Grok 的登录故障、续期失败和 HTTP 401/403 显示“Grok 登录已过期” / “Grok sign-in expired”。弹窗与设置中的“重新登录” / “Sign in again”使用现有验证器解析 Grok CLI，直接运行 `grok.exe login`，在可见控制台等待登录；退出后重新读取额度。同一时刻只能启动一次登录。网络、DNS 与 HTTP 5xx 仍显示连接失败。
+
+失败诊断写入 `%LOCALAPPDATA%\AISubGauge2\logs\app.log`，仅含 ISO 时间戳、厂商、阶段、故障枚举及可用的 HTTP 状态码，不含异常原文、凭据、身份、响应内容或路径。超过 1 MiB 后在下次写入时轮转为 `app.1.log`，共保留两个文件；日志 IO 失败不影响额度读取。测试可通过 `SafeLog` 的 `directory` 参数注入仓库内目录，demo 模式不写生产日志。
+
+仅运行模拟凭据的 Grok 回归测试（不启动真实 Grok）：
+
+```powershell
+dotnet run --project .\tests\AISubGauge.Tests -c Release -- --grok-signin
+```
+
 ## 许可证
 
 本项目采用 MIT 许可证，完整条款见 [LICENSE](LICENSE)。第三方标志的 CC0 / MIT 许可及商标声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；该声明与项目许可证随分发包一起提供。
