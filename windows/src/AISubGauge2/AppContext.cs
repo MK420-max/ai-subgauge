@@ -170,7 +170,7 @@ public sealed class AppContext : ApplicationContext
         }
         catch (Exception error)
         {
-            var failure = SafeFailure.Classify(error, FailureStage.SignInLaunch, Fault.SignIn);
+            var failure = SafeFailure.Classify(error, FailureStage.SignInLaunch, Fault.Network);
             log.Write(Vendor.Grok, failure.Fault, FailureStage.SignInLaunch, failure.HttpStatus);
             if (!disposed)
                 MessageBox.Show(Text.Error(Vendor.Grok, failure.Fault), Text["AppTitle"], MessageBoxButtons.OK, MessageBoxIcon.Warning);

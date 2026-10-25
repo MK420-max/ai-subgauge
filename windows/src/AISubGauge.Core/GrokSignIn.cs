@@ -30,7 +30,7 @@ public sealed class GrokSignIn(Func<Task<VerifiedExecutable>>? resolve = null,
 
     private static async Task RunProcessAsync(ProcessStartInfo info)
     {
-        using var process = Process.Start(info) ?? throw new SafeFailure(Fault.SignIn);
+        using var process = Process.Start(info) ?? throw new SafeFailure(Fault.Network);
         await process.WaitForExitAsync().ConfigureAwait(false);
         // Even a cancelled/failed login must re-poll: the CLI owns the resulting auth state.
     }

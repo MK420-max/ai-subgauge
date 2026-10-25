@@ -8,6 +8,24 @@ using Microsoft.Win32.SafeHandles;
 
 namespace AISubGauge.Core;
 
+// Shared preflight for settings and offline exports, including existing ancestors.
+public static class LocalPathSafety
+{
+    public static void RejectReparsePoints(string path)
+    {
+        for (string? current = Path.GetFullPath(path); current is not null; current = Path.GetDirectoryName(current))
+        {
+            try
+            {
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("Reparse points are not allowed.");
+            }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
+        }
+    }
+}
+
 // Windows-only file access: do not follow links before validating the opened target.
 internal static class LocalFiles
 {

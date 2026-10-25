@@ -63,16 +63,16 @@ public static class Capture
         }
         icons.Save(path, ImageFormat.Png);
     }
-    internal static void SaveTrayIconFiles(string directory, string suffix, IReadOnlyList<TrayIconFamily> families, bool dark, bool showPercentage = false)
+    internal static void SaveTrayIconFiles(string directory, string suffix, IReadOnlyList<TrayIconFamily> families, bool dark, bool showPercentage = false, bool createNew = false)
     {
         // A Windows ICO represents one vendor at seven resolutions. The unsuffixed file is Codex;
         // save the other two alongside it rather than mixing vendors into a single ICO directory.
         if (showPercentage) suffix = "percent-" + suffix;
-        families[0].Save(Path.Combine(directory, "tray-icon-" + suffix + ".ico"));
-        families[1].Save(Path.Combine(directory, "tray-icon-claude-" + suffix + ".ico"));
-        families[2].Save(Path.Combine(directory, "tray-icon-grok-" + suffix + ".ico"));
+        families[0].Save(Path.Combine(directory, "tray-icon-" + suffix + ".ico"), createNew);
+        families[1].Save(Path.Combine(directory, "tray-icon-claude-" + suffix + ".ico"), createNew);
+        families[2].Save(Path.Combine(directory, "tray-icon-grok-" + suffix + ".ico"), createNew);
         TrayIconFamily.SaveContactSheet(Path.Combine(directory, "tray-icon-sizes-" + suffix + ".png"),
-            [("Codex", families[0]), ("Claude", families[1]), ("Grok", families[2])], dark);
+            [("Codex", families[0]), ("Claude", families[1]), ("Grok", families[2])], dark, createNew);
     }
     private static async Task Settle(Form form)
     {

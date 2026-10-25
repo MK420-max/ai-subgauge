@@ -86,7 +86,7 @@ internal static partial class Program
         });
         Test("Grok overrides stay in known locations and expose custom-path flag", () =>
         {
-            var resolver = new ExecutableResolver(new FakeExecutableFiles(grok), new FakeSignatures(new(SignatureStatus.Unsigned)), locations);
+            var resolver = new ExecutableResolver(new FakeExecutableFiles(grok), new FakeSignatures(GrokFixture()), locations);
             using var standard = resolver.Resolve("grok"); Check(!standard.Custom);
             using var custom = resolver.Resolve("grok", grok); Check(custom.Custom);
             Throws(() => resolver.Resolve("grok", @"C:\Fixture\Untrusted\grok.exe"));
@@ -119,7 +119,8 @@ internal static partial class Program
         public Stream OpenRead(string path)
         {
             Opened.Add(path);
-            if (FailOpen || !paths.Contains(path)) throw new IOException(Secret);
+            if (FailOpen) throw new IOException(Secret);
+            if (!paths.Contains(path)) throw new FileNotFoundException(Secret);
             return LastLease = new MemoryStream();
         }
     }

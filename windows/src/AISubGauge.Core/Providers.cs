@@ -115,7 +115,7 @@ public sealed class SubscriptionProvider : ProviderBase, IDisposable
                     if (cached.FiveHour.Percent is null && cached.Weekly.Percent is null) throw new SafeFailure(Fault.InvalidData);
                     return cached;
                 }
-                throw new SafeFailure(Fault.SignIn);
+                throw new SafeFailure(Fault.SignInRequired);
             }
             credential.Protect(redactor);
             if (renewed is not null && credential.Token == renewalSource?.Token && renewed.UserId == credential.UserId && renewed.ClientId == credential.ClientId && renewed.Expires > Clock.Now && renewed.Expires > credential.Expires) credential = renewed;
@@ -164,7 +164,7 @@ public sealed class SubscriptionProvider : ProviderBase, IDisposable
         }
         catch (Exception error)
         {
-            throw SafeFailure.Classify(error, error is HttpRequestException ? FailureStage.RefreshHttp : FailureStage.RefreshRpc, Fault.RefreshFailed);
+            throw SafeFailure.Classify(error, error is HttpRequestException ? FailureStage.RefreshHttp : FailureStage.RefreshRpc, Fault.Network);
         }
     }
     private Snapshot Parse(JsonElement root, Plan plan)

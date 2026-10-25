@@ -41,7 +41,7 @@ SignInExpired|{0} 登录已过期|{0} sign-in expired
 SignInAgain|重新登录|Sign in again
 FaultNetwork|连接失败，请稍后刷新|Connection failed; try refreshing later
 FaultInvalidData|额度数据暂不可用|Quota data is unavailable
-FaultRefreshFailed|续期失败，请在 Grok CLI 重新登录|Refresh failed; sign in to Grok CLI again
+FaultRefreshFailed|续期未完成，请稍后刷新|Refresh did not complete; try refreshing later
 FaultTimeout|请求超时，请稍后刷新|Request timed out; try again later
 FaultCacheExpired|缓存已过期，请在 Grok Bot 更新用量|Cache expired; refresh usage in Grok Bot
 FaultNotAvailable|尚未读取额度|Quota has not been loaded
@@ -68,3 +68,6 @@ AllowUnsignedCodexNpm|允许未签名的 Codex CLI（npm）|Allow unsigned Codex
 Unsigned|未签名|Unsigned
 FaultVerificationFailed|CLI 验证失败。|CLI verification failed.
 FaultVerifierUnresponsive|签名校验未响应，请重启 AI SubGauge|Signature check is not responding. Please restart AI SubGauge.
+FaultGrokCliNotInstalled|未安装 Grok CLI|Grok CLI not installed
+FaultGrokVerificationFailed|Grok CLI 签名验证失败：必须由 X.AI LLC 签名并通过受信任证书链验证。请重新安装官方 Grok CLI。|Grok CLI signature verification failed: a valid X.AI LLC signature and pinned certificate chain are required. Reinstall the official Grok CLI.
+FaultSignInRequired|请在对应应用中登录|Sign in to the corresponding app

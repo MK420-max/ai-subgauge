@@ -379,7 +379,7 @@ internal static partial class Program
         });
         Test("export-icons WinExe runs without GUI and exports exact native/8x Mac comparison pixels", () =>
         {
-            string directory = Path.Combine(Environment.CurrentDirectory, "artifacts", "mac-compare");
+            string directory = Path.Combine(Environment.CurrentDirectory, "artifacts", "mac-compare-" + Guid.NewGuid().ToString("N"));
             var info = new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.CurrentDirectory,
                 "src", "AISubGauge2", "bin", "Release", "net8.0-windows", "AISubGauge2.exe"))
             { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };

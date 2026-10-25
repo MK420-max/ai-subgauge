@@ -120,7 +120,7 @@
     <value>额度数据暂不可用</value>
   </data>
   <data name="FaultRefreshFailed" xml:space="preserve">
-    <value>续期失败，请在 Grok CLI 重新登录</value>
+    <value>续期未完成，请稍后刷新</value>
   </data>
   <data name="FaultTimeout" xml:space="preserve">
     <value>请求超时，请稍后刷新</value>
@@ -198,4 +198,7 @@
 <data name="ShowTrayPercentage" xml:space="preserve"><value>托盘显示百分比</value></data>
 <data name="SignInExpired" xml:space="preserve"><value>{0} 登录已过期</value></data>
 <data name="SignInAgain" xml:space="preserve"><value>重新登录</value></data>
+  <data name="FaultGrokCliNotInstalled" xml:space="preserve"><value>未安装 Grok CLI</value></data>
+  <data name="FaultGrokVerificationFailed" xml:space="preserve"><value>Grok CLI 签名验证失败：必须由 X.AI LLC 签名并通过受信任证书链验证。请重新安装官方 Grok CLI。</value></data>
+  <data name="FaultSignInRequired" xml:space="preserve"><value>请在对应应用中登录</value></data>
 </root>

@@ -46,6 +46,12 @@ internal static class MacTrayRenderer
         return layout;
     }
 
+    private static void ValidateSize(int size)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(size, 16);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(size, 256);
+    }
+
     private static double? Quota(double? value)
         => value is double n && double.IsFinite(n) ? Math.Clamp(n, 0, 100) : null;
 
@@ -68,7 +74,7 @@ internal static class MacTrayRenderer
 
     private static GraphicsPath NumberPath(double? value, int size, bool showPercentage, out TrayIconLayout layout)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(size, 16);
+        ValidateSize(size);
         double? quota = Quota(value);
         bool hasNumber = showPercentage && quota.HasValue;
         float px = PixelScale(size), diameter = MenuArcMetrics.SegmentSize * px;
@@ -80,67 +86,77 @@ internal static class MacTrayRenderer
         float centerY = ring.Top + ring.Height / 2;
         var logo = new Rectangle((int)MathF.Round((size - side) / 2f), (int)MathF.Round(centerY - side / 2f), side, side);
         var digits = new GraphicsPath();
-        layout = new(ring, stroke, RectangleF.Empty, logo, MenuArcMetrics.DigitKnockoutPadding * px,
-            RectangleF.Empty, 0, 0);
-        if (!hasNumber) return digits;
+        try
+        {
+            layout = new(ring, stroke, RectangleF.Empty, logo, MenuArcMetrics.DigitKnockoutPadding * px,
+                RectangleF.Empty, 0, 0);
+            if (!hasNumber) return digits;
 
-        using var family = new FontFamily(DigitFontName);
-        FontStyle style = DigitFontName == "Segoe UI Black" ? FontStyle.Regular : FontStyle.Bold;
-        using var format = (StringFormat)StringFormat.GenericTypographic.Clone();
-        format.FormatFlags |= StringFormatFlags.NoWrap;
-        string text = Math.Round(quota!.Value, MidpointRounding.AwayFromZero).ToString(CultureInfo.InvariantCulture);
-        // Match INK height, not the font em size. Snap cap height and baseline to
-        // device pixels; measuring at a large em avoids GDI+'s small-em rounding.
-        const float measureEm = 100;
-        using var probe = new GraphicsPath();
-        probe.AddString(text, family, (int)style, measureEm, PointF.Empty, format);
-        var cap = probe.GetBounds();
-        float inkHeight = MathF.Round(MenuArcMetrics.DigitInkRatio * diameter);
-        float fontSize = measureEm * inkHeight / cap.Height;
-        float glyphScale = fontSize / measureEm;
-        // Lay out tabular digits explicitly; GDI+ does not expose CoreText's feature settings.
-        using var font = new Font(family, measureEm, style, GraphicsUnit.Pixel);
-        using var measure = new Bitmap(1, 1);
-        using var graphics = Graphics.FromImage(measure);
-        float advance = graphics.MeasureString("0", font, PointF.Empty, format).Width;
-        for (int i = 0; i < text.Length; i++)
-            digits.AddString(text[i].ToString(), family, (int)style, measureEm,
-                new PointF(i * (advance + MenuArcMetrics.DigitKerning * px / glyphScale), 0), format);
-        using (var scale = new Matrix()) { scale.Scale(glyphScale, glyphScale); digits.Transform(scale); }
-        var ink = digits.GetBounds();
-        // Normalize each label's actual ink (flat-topped 4 is shorter than curved 8)
-        // to the same pixel cap height, retaining tabular advances within the label.
-        float baseline = inkHeight + 1;
-        using var position = new Matrix();
-        float x = size / 2f - (ink.Left + ink.Right) / 2;
-        if (size <= 20) x = MathF.Round(x + ink.Left) - ink.Left;
-        position.Translate(x, baseline - ink.Bottom);
-        digits.Transform(position);
-        ink = digits.GetBounds();
-        float width = ink.Width + 2 * MenuArcMetrics.DigitCutoutPadding * px;
-        var cutout = new RectangleF((size - width) / 2, (ink.Top + ink.Bottom - fontSize) / 2, width, fontSize);
-        layout = layout with { NumberBounds = ink, DigitCutout = cutout, Baseline = baseline, FontSize = fontSize };
-        return digits;
+            using var family = new FontFamily(DigitFontName);
+            FontStyle style = DigitFontName == "Segoe UI Black" ? FontStyle.Regular : FontStyle.Bold;
+            using var format = (StringFormat)StringFormat.GenericTypographic.Clone();
+            format.FormatFlags |= StringFormatFlags.NoWrap;
+            string text = Math.Round(quota!.Value, MidpointRounding.AwayFromZero).ToString(CultureInfo.InvariantCulture);
+            // Match INK height, not the font em size. Snap cap height and baseline to
+            // device pixels; measuring at a large em avoids GDI+'s small-em rounding.
+            const float measureEm = 100;
+            using var probe = new GraphicsPath();
+            probe.AddString(text, family, (int)style, measureEm, PointF.Empty, format);
+            var cap = probe.GetBounds();
+            float inkHeight = MathF.Round(MenuArcMetrics.DigitInkRatio * diameter);
+            float fontSize = measureEm * inkHeight / cap.Height;
+            float glyphScale = fontSize / measureEm;
+            // Lay out tabular digits explicitly; GDI+ does not expose CoreText's feature settings.
+            using var font = new Font(family, measureEm, style, GraphicsUnit.Pixel);
+            using var measure = new Bitmap(1, 1);
+            using var graphics = Graphics.FromImage(measure);
+            float advance = graphics.MeasureString("0", font, PointF.Empty, format).Width;
+            for (int i = 0; i < text.Length; i++)
+                digits.AddString(text[i].ToString(), family, (int)style, measureEm,
+                    new PointF(i * (advance + MenuArcMetrics.DigitKerning * px / glyphScale), 0), format);
+            using (var scale = new Matrix()) { scale.Scale(glyphScale, glyphScale); digits.Transform(scale); }
+            var ink = digits.GetBounds();
+            // Normalize each label's actual ink (flat-topped 4 is shorter than curved 8)
+            // to the same pixel cap height, retaining tabular advances within the label.
+            float baseline = inkHeight + 1;
+            using var position = new Matrix();
+            float x = size / 2f - (ink.Left + ink.Right) / 2;
+            if (size <= 20) x = MathF.Round(x + ink.Left) - ink.Left;
+            position.Translate(x, baseline - ink.Bottom);
+            digits.Transform(position);
+            ink = digits.GetBounds();
+            float width = ink.Width + 2 * MenuArcMetrics.DigitCutoutPadding * px;
+            var cutout = new RectangleF((size - width) / 2, (ink.Top + ink.Bottom - fontSize) / 2, width, fontSize);
+            layout = layout with { NumberBounds = ink, DigitCutout = cutout, Baseline = baseline, FontSize = fontSize };
+            return digits;
+        }
+        catch { digits.Dispose(); throw; }
     }
 
     internal static GraphicsPath ArcPath(int size, double percent = 100, bool hasNumber = true)
     {
+        ValidateSize(size);
         var path = new GraphicsPath();
-        if (percent <= 0) return path;
-        var rect = RingBounds(size);
-        double angle = MenuArcMetrics.ArcStart, finish = angle - MenuArcMetrics.ArcSweep * percent / 100;
-        // Split at the axes as in QuotaArc.path: no cubic overshoot outside the canvas.
-        while (angle > finish)
+        try
         {
-            double next = Math.Max(finish, (Math.Ceiling(angle / 90) - 1) * 90);
-            path.AddArc(rect, (float)angle, (float)(next - angle));
-            angle = next;
+            if (percent <= 0) return path;
+            var rect = RingBounds(size);
+            double angle = MenuArcMetrics.ArcStart, finish = angle - MenuArcMetrics.ArcSweep * percent / 100;
+            // Split at the axes as in QuotaArc.path: no cubic overshoot outside the canvas.
+            while (angle > finish)
+            {
+                double next = Math.Max(finish, (Math.Ceiling(angle / 90) - 1) * 90);
+                path.AddArc(rect, (float)angle, (float)(next - angle));
+                angle = next;
+            }
+            return path;
         }
-        return path;
+        catch { path.Dispose(); throw; }
     }
 
     private static Bitmap Mask(int size, Action<Graphics> draw)
     {
+        ValidateSize(size);
         // Each target size gets its own geometry, baseline and exact native logo raster.
         // Supersampling only integrates vector edge coverage; no master icon is resized.
         const int samples = 4;
@@ -153,18 +169,22 @@ internal static class MacTrayRenderer
             draw(g);
         }
         var result = new Bitmap(size, size, PixelFormat.Format32bppArgb);
-        var data = high.LockBits(new Rectangle(0, 0, high.Width, high.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-        byte[] pixels = new byte[data.Stride * data.Height];
-        try { Marshal.Copy(data.Scan0, pixels, 0, pixels.Length); }
-        finally { high.UnlockBits(data); }
-        for (int y = 0; y < size; y++) for (int x = 0; x < size; x++)
+        try
         {
-            int alpha = 0;
-            for (int j = 0; j < samples; j++) for (int i = 0; i < samples; i++)
-                alpha += pixels[(y * samples + j) * data.Stride + (x * samples + i) * 4 + 3];
-            result.SetPixel(x, y, Color.FromArgb((alpha + 8) / 16, Color.White));
+            var data = high.LockBits(new Rectangle(0, 0, high.Width, high.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            byte[] pixels;
+            try { pixels = new byte[data.Stride * data.Height]; Marshal.Copy(data.Scan0, pixels, 0, pixels.Length); }
+            finally { high.UnlockBits(data); }
+            for (int y = 0; y < size; y++) for (int x = 0; x < size; x++)
+            {
+                int alpha = 0;
+                for (int j = 0; j < samples; j++) for (int i = 0; i < samples; i++)
+                    alpha += pixels[(y * samples + j) * data.Stride + (x * samples + i) * 4 + 3];
+                result.SetPixel(x, y, Color.FromArgb((alpha + 8) / 16, Color.White));
+            }
+            return result;
         }
-        return result;
+        catch { result.Dispose(); throw; }
     }
 
     internal static Bitmap NumberMask(double? percent, int size, bool showPercentage = true)
@@ -207,28 +227,32 @@ internal static class MacTrayRenderer
     private static Bitmap ReferenceArcMask(int size, double percent, float width, bool hasNumber)
     {
         var result = new Bitmap(size, size, PixelFormat.Format32bppArgb);
-        if (percent <= 0) return result;
-        const int samples = 8;
-        double px = PixelScale(size), radius = MenuArcMetrics.Radius * px;
-        double centerY = size / 2d;
-        double start = MenuArcMetrics.ArcStart * Math.PI / 180, sweep = MenuArcMetrics.ArcSweep * percent / 100 * Math.PI / 180;
-        double end = start - sweep, sx = radius * Math.Cos(start), sy = radius * Math.Sin(start);
-        double ex = radius * Math.Cos(end), ey = radius * Math.Sin(end), halfSquared = width * width / 4;
-        for (int y = 0; y < size; y++) for (int x = 0; x < size; x++)
+        try
         {
-            int hits = 0;
-            for (int j = 0; j < samples; j++) for (int i = 0; i < samples; i++)
+            if (percent <= 0) return result;
+            const int samples = 8;
+            double px = PixelScale(size), radius = MenuArcMetrics.Radius * px;
+            double centerY = size / 2d;
+            double start = MenuArcMetrics.ArcStart * Math.PI / 180, sweep = MenuArcMetrics.ArcSweep * percent / 100 * Math.PI / 180;
+            double end = start - sweep, sx = radius * Math.Cos(start), sy = radius * Math.Sin(start);
+            double ex = radius * Math.Cos(end), ey = radius * Math.Sin(end), halfSquared = width * width / 4;
+            for (int y = 0; y < size; y++) for (int x = 0; x < size; x++)
             {
-                double dx = x + (i + .5) / samples - size / 2d, dy = y + (j + .5) / samples - centerY;
-                double angle = (start - Math.Atan2(dy, dx) + 2 * Math.PI) % (2 * Math.PI);
-                double distance = Math.Sqrt(dx * dx + dy * dy) - radius;
-                double squared = angle <= sweep ? distance * distance :
-                    Math.Min((dx - sx) * (dx - sx) + (dy - sy) * (dy - sy), (dx - ex) * (dx - ex) + (dy - ey) * (dy - ey));
-                if (squared <= halfSquared) hits++;
+                int hits = 0;
+                for (int j = 0; j < samples; j++) for (int i = 0; i < samples; i++)
+                {
+                    double dx = x + (i + .5) / samples - size / 2d, dy = y + (j + .5) / samples - centerY;
+                    double angle = (start - Math.Atan2(dy, dx) + 2 * Math.PI) % (2 * Math.PI);
+                    double distance = Math.Sqrt(dx * dx + dy * dy) - radius;
+                    double squared = angle <= sweep ? distance * distance :
+                        Math.Min((dx - sx) * (dx - sx) + (dy - sy) * (dy - sy), (dx - ex) * (dx - ex) + (dy - ey) * (dy - ey));
+                    if (squared <= halfSquared) hits++;
+                }
+                result.SetPixel(x, y, Color.FromArgb((hits * 255 + 32) / 64, Color.White));
             }
-            result.SetPixel(x, y, Color.FromArgb((hits * 255 + 32) / 64, Color.White));
+            return result;
         }
-        return result;
+        catch { result.Dispose(); throw; }
     }
 
     internal static Bitmap Render(Vendor vendor, double? value, bool dark, int size, bool showPercentage, TrayRenderMode mode)
@@ -250,44 +274,53 @@ internal static class MacTrayRenderer
         Color foreground = dark ? Color.White : Color.Black;
         Color color = ColorTranslator.FromHtml(Presentation.Color(quota, dark));
         var result = new Bitmap(size, size, PixelFormat.Format32bppArgb);
-        for (int y = 0; y < size; y++) for (int x = 0; x < size; x++)
+        try
         {
-            float alpha = track.GetPixel(x, y).A / 255f * MenuArcMetrics.TrackOpacity;
-            float r = foreground.R * alpha, green = foreground.G * alpha, b = foreground.B * alpha;
-            void Over(Color ink, float a)
+            for (int y = 0; y < size; y++) for (int x = 0; x < size; x++)
             {
-                r = ink.R * a + r * (1 - a); green = ink.G * a + green * (1 - a); b = ink.B * a + b * (1 - a);
-                alpha = a + alpha * (1 - a);
+                float alpha = track.GetPixel(x, y).A / 255f * MenuArcMetrics.TrackOpacity;
+                float r = foreground.R * alpha, green = foreground.G * alpha, b = foreground.B * alpha;
+                void Over(Color ink, float a)
+                {
+                    r = ink.R * a + r * (1 - a); green = ink.G * a + green * (1 - a); b = ink.B * a + b * (1 - a);
+                    alpha = a + alpha * (1 - a);
+                }
+                void DestinationOut(float a) { alpha *= 1 - a; r *= 1 - a; green *= 1 - a; b *= 1 - a; }
+                Over(color, fill.GetPixel(x, y).A / 255f);
+                DestinationOut(cutout.GetPixel(x, y).A / 255f); // Only arcs are cut out.
+                Over(foreground, logo.GetPixel(x, y).A / 255f);
+                DestinationOut(knockout.GetPixel(x, y).A / 255f); // Transparent glyph moat, never a background-colored halo.
+                Over(foreground, number.GetPixel(x, y).A / 255f);
+                int Byte(float v) => Math.Clamp((int)Math.Round(v), 0, 255);
+                result.SetPixel(x, y, alpha <= 0 ? Color.Transparent : Color.FromArgb(Byte(alpha * 255), Byte(r / alpha), Byte(green / alpha), Byte(b / alpha)));
             }
-            void DestinationOut(float a) { alpha *= 1 - a; r *= 1 - a; green *= 1 - a; b *= 1 - a; }
-            Over(color, fill.GetPixel(x, y).A / 255f);
-            DestinationOut(cutout.GetPixel(x, y).A / 255f); // Only arcs are cut out.
-            Over(foreground, logo.GetPixel(x, y).A / 255f);
-            DestinationOut(knockout.GetPixel(x, y).A / 255f); // Transparent glyph moat, never a background-colored halo.
-            Over(foreground, number.GetPixel(x, y).A / 255f);
-            int Byte(float v) => Math.Clamp((int)Math.Round(v), 0, 255);
-            result.SetPixel(x, y, alpha <= 0 ? Color.Transparent : Color.FromArgb(Byte(alpha * 255), Byte(r / alpha), Byte(green / alpha), Byte(b / alpha)));
+            return result;
         }
-        return result;
+        catch { result.Dispose(); throw; }
     }
 
     internal static Bitmap LogoMask(Vendor vendor, int size, TrayIconLayout layout)
     {
-        var source = Logos.Get(vendor, true, layout.LogoBounds.Width);
+        ValidateSize(size);
+        var source = Logos.Get(vendor, true, layout.LogoBounds.Width); // Borrowed cache entry, owned by Logos.
         var result = new Bitmap(size, size, PixelFormat.Format32bppArgb);
-        float cx = layout.RingBounds.Left + layout.RingBounds.Width / 2;
-        float cy = layout.RingBounds.Top + layout.RingBounds.Height / 2;
-        float radius = (layout.RingBounds.Width - layout.RingStroke) / 2 - layout.LogoClearance;
-        for (int y = 0; y < size; y++) for (int x = 0; x < size; x++)
+        try
         {
-            if (!layout.LogoBounds.Contains(x, y)) continue;
-            // Contain the entire pixel footprint in the full inner circle, including
-            // the bottom opening and digit cutout. An arc-only moat lets Grok escape.
-            float dx = Math.Abs(x + .5f - cx) + .5f, dy = Math.Abs(y + .5f - cy) + .5f;
-            float coverage = Math.Clamp((radius - MathF.Sqrt(dx * dx + dy * dy)) * 2, 0, 1);
-            int alpha = (int)MathF.Round(source.GetPixel(x - layout.LogoBounds.X, y - layout.LogoBounds.Y).A * coverage);
-            result.SetPixel(x, y, Color.FromArgb(alpha, Color.White));
+            float cx = layout.RingBounds.Left + layout.RingBounds.Width / 2;
+            float cy = layout.RingBounds.Top + layout.RingBounds.Height / 2;
+            float radius = (layout.RingBounds.Width - layout.RingStroke) / 2 - layout.LogoClearance;
+            for (int y = 0; y < size; y++) for (int x = 0; x < size; x++)
+            {
+                if (!layout.LogoBounds.Contains(x, y)) continue;
+                // Contain the entire pixel footprint in the full inner circle, including
+                // the bottom opening and digit cutout. An arc-only moat lets Grok escape.
+                float dx = Math.Abs(x + .5f - cx) + .5f, dy = Math.Abs(y + .5f - cy) + .5f;
+                float coverage = Math.Clamp((radius - MathF.Sqrt(dx * dx + dy * dy)) * 2, 0, 1);
+                int alpha = (int)MathF.Round(source.GetPixel(x - layout.LogoBounds.X, y - layout.LogoBounds.Y).A * coverage);
+                result.SetPixel(x, y, Color.FromArgb(alpha, Color.White));
+            }
+            return result;
         }
-        return result;
+        catch { result.Dispose(); throw; }
     }
 }

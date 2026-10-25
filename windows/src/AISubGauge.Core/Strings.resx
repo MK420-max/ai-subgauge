@@ -120,7 +120,7 @@
     <value>Quota data is unavailable</value>
   </data>
   <data name="FaultRefreshFailed" xml:space="preserve">
-    <value>Refresh failed; sign in to Grok CLI again</value>
+    <value>Refresh did not complete; try refreshing later</value>
   </data>
   <data name="FaultTimeout" xml:space="preserve">
     <value>Request timed out; try again later</value>
@@ -198,4 +198,7 @@
 <data name="ShowTrayPercentage" xml:space="preserve"><value>Show percentage in tray</value></data>
 <data name="SignInExpired" xml:space="preserve"><value>{0} sign-in expired</value></data>
 <data name="SignInAgain" xml:space="preserve"><value>Sign in again</value></data>
+  <data name="FaultGrokCliNotInstalled" xml:space="preserve"><value>Grok CLI not installed</value></data>
+  <data name="FaultGrokVerificationFailed" xml:space="preserve"><value>Grok CLI signature verification failed: a valid X.AI LLC signature and pinned certificate chain are required. Reinstall the official Grok CLI.</value></data>
+  <data name="FaultSignInRequired" xml:space="preserve"><value>Sign in to the corresponding app</value></data>
 </root>

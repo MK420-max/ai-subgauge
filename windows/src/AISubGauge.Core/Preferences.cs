@@ -38,8 +38,10 @@ public sealed class SettingsStore(string directory, bool readOnly = false)
         try
         {
             var path = Path.Combine(directory, "settings.json");
-            if (!File.Exists(path) || new FileInfo(path).Length > 65536) return new();
-            var value = JsonSerializer.Deserialize<Settings>(File.ReadAllText(path)) ?? new();
+            LocalPathSafety.RejectReparsePoints(path);
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (stream.Length > 65536) return new();
+            var value = JsonSerializer.Deserialize<Settings>(stream) ?? new();
             if (!Enum.IsDefined(value.Language)) value.Language = Language.System;
             if (!Enum.IsDefined(value.Theme)) value.Theme = Theme.System;
             if (value.TrayEnabled is not { Length: 3 }) value.TrayEnabled = [true, true, true];
@@ -52,10 +54,19 @@ public sealed class SettingsStore(string directory, bool readOnly = false)
         if (readOnly) return;
         try
         {
+            string path = Path.Combine(directory, "settings.json");
+            LocalPathSafety.RejectReparsePoints(path);
             Directory.CreateDirectory(directory);
-            string temporary = Path.Combine(directory, "settings.json.tmp");
-            File.WriteAllText(temporary, JsonSerializer.Serialize(value));
-            File.Move(temporary, Path.Combine(directory, "settings.json"), true);
+            string temporary = Path.Combine(directory, "settings." + Guid.NewGuid().ToString("N") + ".tmp");
+            LocalPathSafety.RejectReparsePoints(path);
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                JsonSerializer.Serialize(stream, value);
+                stream.Flush(flushToDisk: true);
+            }
+            LocalPathSafety.RejectReparsePoints(path);
+            if (File.Exists(path)) File.Replace(temporary, path, null);
+            else File.Move(temporary, path);
         }
         catch { throw new IOException("Settings could not be saved."); }
     }
