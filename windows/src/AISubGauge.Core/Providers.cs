@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Globalization;
@@ -61,27 +61,25 @@ public abstract class ProviderBase(IClock clock, SafeLog log) : IProvider
 {
     public abstract Vendor Vendor { get; }
     protected IClock Clock { get; } = clock;
+    protected SafeLog Log { get; } = log;
     protected abstract Task<Snapshot> FetchCoreAsync(CancellationToken cancellation);
     public async Task<Snapshot> FetchAsync(CancellationToken cancellation = default)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         timeout.CancelAfter(TimeSpan.FromSeconds(45));
-        Fault fault;
         try
         {
             var result = await FetchCoreAsync(timeout.Token).ConfigureAwait(false);
             if (result.FiveHour.Percent is null && result.Weekly.Percent is null && result.Fault == Fault.None) throw new SafeFailure(Fault.InvalidData);
-            log.Write(Vendor, result.Fault);
+            Log.Write(Vendor, result.Fault);
             return result;
         }
-        catch (SafeFailure error) { fault = error.Fault; }
-        catch (OperationCanceledException) { fault = Fault.Timeout; }
-        catch (HttpRequestException) { fault = Fault.Network; }
-        catch (FileNotFoundException) { fault = Fault.SignIn; }
-        catch (DirectoryNotFoundException) { fault = Fault.SignIn; }
-        catch { fault = Fault.InvalidData; }
-        log.Write(Vendor, fault);
-        return Snapshot.Failure(Vendor, fault, Clock);
+        catch (Exception error)
+        {
+            var failure = SafeFailure.Classify(error, FailureStage.UsageRpc);
+            Log.Write(Vendor, failure.Fault, failure.Stage!.Value, failure.HttpStatus);
+            return Snapshot.Failure(Vendor, failure.Fault, Clock);
+        }
     }
 }
 public sealed class SubscriptionProvider : ProviderBase, IDisposable
@@ -92,6 +90,7 @@ public sealed class SubscriptionProvider : ProviderBase, IDisposable
     private readonly IGrokCache? cache;
     private readonly Redactor redactor;
     private Credential? renewed;
+    private Credential? renewalSource;
     public override Vendor Vendor { get; }
     public SubscriptionProvider(Vendor vendor, ICredentialSource source, IClock clock, Redactor redactor, SafeLog log,
         HttpMessageHandler? handler = null, IGrokRefresh? refresh = null, IGrokCache? cache = null) : base(clock, log)
@@ -102,39 +101,56 @@ public sealed class SubscriptionProvider : ProviderBase, IDisposable
     }
     protected override async Task<Snapshot> FetchCoreAsync(CancellationToken cancellation)
     {
-        var credential = await source.ReadAsync(Vendor, cancellation).ConfigureAwait(false);
-        if (credential is null)
+        var stage = FailureStage.ReadCredentials;
+        try
         {
-            if (Vendor == Vendor.Grok && cache is not null) return await cache.ReadAsync(cancellation).ConfigureAwait(false);
-            throw new SafeFailure(Fault.SignIn);
-        }
-        credential.Protect(redactor);
-        if (renewed is not null && renewed.UserId == credential.UserId && renewed.ClientId == credential.ClientId && renewed.Expires > Clock.Now && renewed.Expires > credential.Expires) credential = renewed;
-        bool didRefresh = false;
-        if (Vendor == Vendor.Grok && credential.Expires <= Clock.Now)
-        {
-            credential = await Renew(credential, cancellation).ConfigureAwait(false); didRefresh = true;
-        }
-        for (int attempt = 0; attempt < 2; attempt++)
-        {
-            string endpoint = Vendor == Vendor.Claude ? "https://api.anthropic.com/api/oauth/usage" : "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
-            using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.Token);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            if (Vendor == Vendor.Claude) request.Headers.Add("anthropic-beta", "oauth-2025-04-20");
-            else { request.Headers.Add("X-XAI-Token-Auth", "xai-grok-cli"); request.Headers.Add("x-userid", credential.UserId); }
-            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation).ConfigureAwait(false);
-            if (response.StatusCode == HttpStatusCode.Unauthorized && Vendor == Vendor.Grok && !didRefresh)
+            var credential = await source.ReadAsync(Vendor, cancellation).ConfigureAwait(false);
+            if (credential is null)
             {
-                credential = await Renew(credential, cancellation).ConfigureAwait(false); didRefresh = true; continue;
+                if (Vendor == Vendor.Grok && cache is not null)
+                {
+                    stage = FailureStage.Cache;
+                    var cached = await cache.ReadAsync(cancellation).ConfigureAwait(false);
+                    if (cached.Fault != Fault.None) throw new SafeFailure(cached.Fault);
+                    if (cached.FiveHour.Percent is null && cached.Weekly.Percent is null) throw new SafeFailure(Fault.InvalidData);
+                    return cached;
+                }
+                throw new SafeFailure(Fault.SignIn);
             }
-            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden) throw new SafeFailure(Fault.SignIn);
-            if (!response.IsSuccessStatusCode) throw new SafeFailure(Fault.Network);
-            using var stream = await response.Content.ReadAsStreamAsync(cancellation).ConfigureAwait(false);
-            using var document = await Json.ReadAsync(stream, cancellation).ConfigureAwait(false);
-            return Parse(document.RootElement, credential.Plan);
+            credential.Protect(redactor);
+            if (renewed is not null && credential.Token == renewalSource?.Token && renewed.UserId == credential.UserId && renewed.ClientId == credential.ClientId && renewed.Expires > Clock.Now && renewed.Expires > credential.Expires) credential = renewed;
+            bool didRefresh = false;
+            if (Vendor == Vendor.Grok && credential.Expires <= Clock.Now)
+            {
+                credential = await Renew(credential, cancellation).ConfigureAwait(false); didRefresh = true;
+            }
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                stage = Vendor == Vendor.Grok ? FailureStage.BillingHttp : FailureStage.UsageHttp;
+                string endpoint = Vendor == Vendor.Claude ? "https://api.anthropic.com/api/oauth/usage" : "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+                using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.Token);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                if (Vendor == Vendor.Claude) request.Headers.Add("anthropic-beta", "oauth-2025-04-20");
+                else { request.Headers.Add("X-XAI-Token-Auth", "xai-grok-cli"); request.Headers.Add("x-userid", credential.UserId); }
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation).ConfigureAwait(false);
+                if (response.StatusCode == HttpStatusCode.Unauthorized && Vendor == Vendor.Grok && !didRefresh)
+                {
+                    Log.Write(Vendor, Fault.SignIn, stage, (int)response.StatusCode);
+                    credential = await Renew(credential, cancellation).ConfigureAwait(false); didRefresh = true; continue;
+                }
+                if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden) throw new SafeFailure(Fault.SignIn, httpStatus: (int)response.StatusCode);
+                if (!response.IsSuccessStatusCode) throw new SafeFailure(Fault.Network, httpStatus: (int)response.StatusCode);
+                using var stream = await response.Content.ReadAsStreamAsync(cancellation).ConfigureAwait(false);
+                stage = FailureStage.Parse;
+                using var document = await Json.ReadAsync(stream, cancellation).ConfigureAwait(false);
+                var result = Parse(document.RootElement, credential.Plan);
+                if (result.FiveHour.Percent is null && result.Weekly.Percent is null) throw new SafeFailure(Fault.InvalidData);
+                return result;
+            }
+            throw new SafeFailure(Fault.RefreshFailed, stage: FailureStage.RefreshRpc);
         }
-        throw new SafeFailure(Fault.RefreshFailed);
+        catch (Exception error) { throw SafeFailure.Classify(error, stage); }
     }
     private async Task<Credential> Renew(Credential expected, CancellationToken cancellation)
     {
@@ -144,9 +160,12 @@ public sealed class SubscriptionProvider : ProviderBase, IDisposable
             var result = await refresh.RefreshAsync(expected, cancellation).ConfigureAwait(false);
             result.Protect(redactor);
             if (result.UserId != expected.UserId || result.ClientId != expected.ClientId || result.Expires is null || result.Expires <= Clock.Now) throw new SafeFailure(Fault.RefreshFailed);
-            renewed = result; return result;
+            renewalSource = expected; renewed = result; return result;
         }
-        catch { throw new SafeFailure(Fault.RefreshFailed); }
+        catch (Exception error)
+        {
+            throw SafeFailure.Classify(error, error is HttpRequestException ? FailureStage.RefreshHttp : FailureStage.RefreshRpc, Fault.RefreshFailed);
+        }
     }
     private Snapshot Parse(JsonElement root, Plan plan)
     {

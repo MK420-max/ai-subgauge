@@ -26,6 +26,8 @@ public sealed record Snapshot(Vendor Vendor, Plan Plan, Window FiveHour, Window 
 }
 public static class Presentation
 {
+    public static bool SignInExpired(Fault fault) => fault is Fault.SignIn or Fault.RefreshFailed;
+    public static bool CanSignInAgain(Snapshot snapshot) => snapshot.Vendor == Vendor.Grok && SignInExpired(snapshot.Fault);
     public static string Color(double? percent, bool dark) => percent is null ? (dark ? "#636366" : "#AEAEB2") :
         percent >= 50 ? (dark ? "#30D158" : "#34C759") : percent >= 20 ? (dark ? "#FF9F0A" : "#FF9500") : (dark ? "#FF453A" : "#FF3B30");
     public static string Percent(double? value) => value is double n && double.IsFinite(n) ? Math.Clamp(n, 0, 100).ToString("0", CultureInfo.InvariantCulture) + "%" : "—";

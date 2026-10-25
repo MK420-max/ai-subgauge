@@ -54,12 +54,19 @@ public sealed class RpcSession : IRpcSession
             {
                 var root = document.RootElement;
                 if (Json.Number(root, "id") != id) continue;
-                if (Json.Get(root, "error").ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null)) throw new SafeFailure(Fault.SignIn);
+                if (Json.Get(root, "error").ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null)) throw RpcError(Json.Get(root, "error"));
                 var result = Json.Get(root, "result");
                 if (result.ValueKind == JsonValueKind.Undefined) throw new SafeFailure(Fault.InvalidData);
                 return result.Clone();
             }
         }
+    }
+    internal static SafeFailure RpcError(JsonElement error)
+    {
+        var data = Json.Get(error, "data");
+        double? number = Json.Number(data, "statusCode") ?? Json.Number(data, "status") ?? Json.Number(error, "code");
+        int? status = number is >= 100 and <= 599 && number == Math.Truncate(number.Value) ? (int)number.Value : null;
+        return new(status is >= 500 ? Fault.Network : Fault.SignIn, httpStatus: status);
     }
     private async Task<string> ReadLine(CancellationToken cancellation)
     {
@@ -120,7 +127,7 @@ public sealed class GrokCliRefresh(ICredentialSource source, IClock clock, Func<
             else
             {
                 // Keep CLI scratch state within the new app's directory; never touch 1.x settings.
-                var current = await source.ReadAsync(Vendor.Grok, cancellation).ConfigureAwait(false);
+                var current = await SafeFailure.AtAsync(FailureStage.ReadCredentials, () => source.ReadAsync(Vendor.Grok, cancellation)).ConfigureAwait(false);
                 if (current is null || current.UserId != expected.UserId || current.ClientId != expected.ClientId) throw new SafeFailure(Fault.RefreshFailed);
                 directory = Path.Combine(SettingsStore.DefaultDirectory, "refresh", Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(directory);
@@ -138,11 +145,16 @@ public sealed class GrokCliRefresh(ICredentialSource source, IClock clock, Func<
                 // Discard the RPC bearer; the official CLI owns credential rotation and persistence.
                 await session.CallAsync(2, "_x.ai/auth/getBearerToken", new { }, cancellation).ConfigureAwait(false);
             }
-            var refreshed = await source.ReadAsync(Vendor.Grok, cancellation).ConfigureAwait(false);
+            var refreshed = await SafeFailure.AtAsync(FailureStage.ReadCredentials, () => source.ReadAsync(Vendor.Grok, cancellation)).ConfigureAwait(false);
             if (refreshed is null || refreshed.UserId != expected.UserId || refreshed.ClientId != expected.ClientId || refreshed.Expires is null || refreshed.Expires <= clock.Now) throw new SafeFailure(Fault.RefreshFailed);
             return refreshed;
         }
-        catch { throw new SafeFailure(Fault.RefreshFailed); }
+        catch (Exception error)
+        {
+            var stage = error is HttpRequestException || error is SafeFailure { HttpStatus: not null }
+                ? FailureStage.RefreshHttp : FailureStage.RefreshRpc;
+            throw SafeFailure.Classify(error, stage, Fault.RefreshFailed);
+        }
         finally
         {
             // This exact newly-created GUID folder is the only recursive deletion target.

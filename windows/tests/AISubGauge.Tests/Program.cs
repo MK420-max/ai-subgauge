@@ -18,6 +18,11 @@ internal static partial class Program
     {
         if (args.Length > 0)
         {
+            if (args.Length == 1 && args[0] == "--grok-signin")
+            {
+                RunGrokSignInTests();
+                Console.WriteLine($"Grok sign-in: {passed} PASS, {failed} FAIL"); return failed == 0 ? 0 : 1;
+            }
             if (args.Length != 1 || args[0] != "--packaging") return 2;
             RunPackagingTests();
             Console.WriteLine($"Packaging: {passed} PASS, {failed} FAIL"); return failed == 0 ? 0 : 1;
@@ -25,6 +30,7 @@ internal static partial class Program
         RunSecurityTests();
         RunTrayIconTests();
         RunTrayPercentageTests();
+        RunGrokSignInTests();
         Test("quota color boundaries (light/dark)", () =>
         {
             foreach (bool dark in new[] { false, true })

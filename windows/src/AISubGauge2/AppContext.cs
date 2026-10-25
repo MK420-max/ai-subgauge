@@ -1,4 +1,4 @@
-﻿using AISubGauge.Core;
+using AISubGauge.Core;
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.Globalization;
@@ -42,6 +42,7 @@ public sealed class AppContext : ApplicationContext
     public bool Demo => options.Demo;
     public bool Capturing => options.ScreenshotDirectory is not null;
     public bool Refreshing { get; private set; }
+    public bool SigningIn => grokSignIn.Running;
     public DateTimeOffset? Updated { get; private set; }
     public Snapshot[] Snapshots { get; private set; }
     public IReadOnlyList<Snapshot> VisibleSnapshots => Snapshots.Where(s => visible[(int)s.Vendor]).ToArray();
@@ -61,6 +62,9 @@ public sealed class AppContext : ApplicationContext
     private readonly EventWaitHandle activation;
     private readonly RegisteredWaitHandle activationWait;
     private bool disposed;
+    private bool refreshPending;
+    private readonly GrokSignIn grokSignIn = new();
+    private readonly SafeLog log;
     private readonly AutostartState autostart;
     public bool AutostartFailed => autostart.Failed;
     internal bool TimersRunning => refreshTimer.Enabled && runningTimer.Enabled;
@@ -69,8 +73,10 @@ public sealed class AppContext : ApplicationContext
     // Tests inject a registry in demo mode: no credentials, network or real registry writes.
     internal AppContext(Options options, IRunRegistry? registry, SafeLog? startupLog = null, SettingsStore? settingsStore = null)
     {
-        autostart = new(registry ?? new RunRegistry(), startupLog ?? new SafeLog(new Redactor()));
         this.options = options; store = settingsStore ?? new(SettingsStore.DefaultDirectory, Capturing || Demo);
+        var redactor = new Redactor();
+        log = startupLog ?? new SafeLog(redactor, directory: Capturing || Demo ? null : SafeLog.DefaultDirectory);
+        autostart = new(registry ?? new RunRegistry(), log);
         Settings = Capturing || Demo ? new Settings() : store.Load();
         if (Capturing) Settings.AlwaysShow = true;
         if (options.Theme != Theme.System) Settings.Theme = options.Theme;
@@ -81,7 +87,7 @@ public sealed class AppContext : ApplicationContext
         _ = dispatcher.Handle;
         if (!Demo)
         {
-            var redactor = new Redactor(); var log = new SafeLog(redactor); var credentials = new CredentialFiles(Clock);
+            var credentials = new CredentialFiles(Clock);
             providers.Add(new CodexProvider(Clock, log, allowUnsignedNpm: () => Settings.AllowUnsignedCodexNpm));
             providers.Add(new SubscriptionProvider(Vendor.Claude, credentials, Clock, redactor, log));
             providers.Add(new SubscriptionProvider(Vendor.Grok, credentials, Clock, redactor, log, refresh: new GrokCliRefresh(credentials, Clock, log: log), cache: new GrokBotCache(Clock)));
@@ -153,16 +159,41 @@ public sealed class AppContext : ApplicationContext
             if (old.AllowUnsignedCodexNpm != Settings.AllowUnsignedCodexNpm) _ = RefreshAsync();
         });
     }
-    public async Task RefreshAsync()
+    public async Task SignInGrokAsync()
     {
-        if (Refreshing || disposed) return; Refreshing = true; panel.Invalidate(); settingsForm.Invalidate();
+        if (disposed || Demo || Capturing || SigningIn) return;
         try
         {
-            var results = Demo ? Enum.GetValues<Vendor>().Select(v => Snapshot.Demo(v, Clock)).ToArray() : await Task.WhenAll(providers.Select(p => p.FetchAsync(lifetime.Token)));
-            if (disposed) return;
-            Snapshots = results; Updated = Clock.Now; UpdateVisibility(); UpdateIcons();
+            var login = grokSignIn.RunAsync();
+            panel.UpdateSignIn(); settingsForm.UpdateSignIn();
+            if (await login && !disposed) await RefreshAsync(queue: true);
         }
-        finally { Refreshing = false; if (!disposed) { panel.Invalidate(); settingsForm.Invalidate(); } }
+        catch (Exception error)
+        {
+            var failure = SafeFailure.Classify(error, FailureStage.SignInLaunch, Fault.SignIn);
+            log.Write(Vendor.Grok, failure.Fault, FailureStage.SignInLaunch, failure.HttpStatus);
+            if (!disposed)
+                MessageBox.Show(Text.Error(Vendor.Grok, failure.Fault), Text["AppTitle"], MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally { if (!disposed) { panel.UpdateSignIn(); settingsForm.UpdateSignIn(); } }
+    }
+    public async Task RefreshAsync(bool queue = false)
+    {
+        if (disposed) return;
+        if (Refreshing) { refreshPending |= queue; return; }
+        Refreshing = true; panel.Invalidate(); settingsForm.Invalidate();
+        try
+        {
+            do
+            {
+                refreshPending = false;
+                var results = Demo ? Enum.GetValues<Vendor>().Select(v => Snapshot.Demo(v, Clock)).ToArray() : await Task.WhenAll(providers.Select(p => p.FetchAsync(lifetime.Token)));
+                if (disposed) return;
+                Snapshots = results; Updated = Clock.Now; UpdateVisibility(); UpdateIcons();
+            }
+            while (refreshPending && !disposed);
+        }
+        finally { Refreshing = false; if (!disposed) { panel.UpdateSignIn(); settingsForm.UpdateSignIn(); panel.Invalidate(); settingsForm.Invalidate(); } }
     }
     private void UpdateVisibility()
     {
@@ -180,6 +211,7 @@ public sealed class AppContext : ApplicationContext
             visible[i] = gate.Visible(vendor, RunningGate.ProcessNames[vendor].Any(names.Contains), Capturing || Settings.AlwaysShow);
             icons[i].Visible = (Capturing || Settings.TrayEnabled[i]) && visible[i];
         }
+        panel.UpdateSignIn();
     }
     public bool TrayDark => !SystemAppearance.Light(true);
     public int TrayIconSize { get; private set; }
