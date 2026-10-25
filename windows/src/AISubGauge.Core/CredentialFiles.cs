@@ -16,7 +16,7 @@ public sealed class CredentialFiles(IClock clock) : ICredentialSource
             using var document = await ReadFileAsync(UserFile(".claude", ".credentials.json"), cancellation).ConfigureAwait(false);
             var oauth = Json.Get(document.RootElement, "claudeAiOauth");
             token = Json.String(oauth, "accessToken");
-            if (string.IsNullOrEmpty(token)) throw new SafeFailure(Fault.SignIn);
+            if (string.IsNullOrEmpty(token)) throw new SafeFailure(Fault.SignInRequired);
             return new(token, plan: Presentation.ParsePlan(Json.String(oauth, "subscriptionType")));
         }
         if (vendor != Vendor.Grok) return null;
@@ -30,14 +30,14 @@ public sealed class CredentialFiles(IClock clock) : ICredentialSource
             if (Json.String(value, "auth_mode") is not ("oidc" or "external") || Json.String(value, "oidc_issuer") is not ("https://auth.x.ai" or "https://auth.x.ai/")) continue;
             string? client = Json.String(value, "oidc_client_id"), token = Json.String(value, "key"), user = Json.String(value, "user_id");
             var created = Json.Date(value, "create_time");
-            if (!Header(token, 32768) || !Header(user, 256) || !Header(client, 256) || entry.Name != "https://auth.x.ai::" + client || created is null || created > clock.Now.AddMinutes(5)) throw new SafeFailure(Fault.SignIn);
+            if (!Header(token, 32768) || !Header(user, 256) || !Header(client, 256) || entry.Name != "https://auth.x.ai::" + client || created is null || created > clock.Now.AddMinutes(5)) throw new SafeFailure(Fault.SignInRequired);
             var expiry = Json.Date(value, "expires_at");
             if (Json.Get(value, "expires_at").ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null) && expiry is null) throw new SafeFailure(Fault.InvalidData);
             var next = new Credential(token!, user!, client!, expiry ?? created.Value.AddDays(30));
-            if (selected is not null && selected.UserId != next.UserId) throw new SafeFailure(Fault.SignIn);
+            if (selected is not null && selected.UserId != next.UserId) throw new SafeFailure(Fault.SignInRequired);
             if (selected is null || next.Expires > selected.Expires) selected = next;
         }
-        return selected ?? throw new SafeFailure(Fault.SignIn);
+        return selected ?? throw new SafeFailure(Fault.SignInRequired);
     }
     private static bool Header(string? value, int max) => !string.IsNullOrEmpty(value) && value.Length <= max && value.All(c => c >= 0x21 && c <= 0x7e);
     internal static async Task<JsonDocument> ReadFileAsync(string path, CancellationToken cancellation)
@@ -62,7 +62,7 @@ public sealed class GrokBotCache(IClock clock) : IGrokCache
             using var cache = await CredentialFiles.ReadFileAsync(Path.Combine(directory, Filename("sand.client.slice.account." + escaped + ".weekly-usage.cache")), cancellation).ConfigureAwait(false);
             return Parse(cache.RootElement);
         }
-        throw new SafeFailure(Fault.SignIn);
+        throw new SafeFailure(Fault.SignInRequired);
     }
     public Snapshot Parse(JsonElement root)
     {

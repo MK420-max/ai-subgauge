@@ -3,7 +3,7 @@ using System.Globalization;
 namespace AISubGauge.Core;
 
 public enum Vendor { Codex, Claude, Grok }
-public enum Fault { None, SignIn, Network, InvalidData, RefreshFailed, Timeout, CacheExpired, NotAvailable, VerificationFailed, VerifierUnresponsive }
+public enum Fault { None, SignIn, Network, InvalidData, RefreshFailed, Timeout, CacheExpired, NotAvailable, VerificationFailed, VerifierUnresponsive, GrokCliNotInstalled, GrokVerificationFailed, SignInRequired }
 public enum Plan { Unknown, Plus, Pro, Max, SuperGrok, SuperGrokHeavy, Team, Enterprise, Free }
 public enum Language { System, Chinese, English }
 public enum Theme { System, Light, Dark }
@@ -26,7 +26,7 @@ public sealed record Snapshot(Vendor Vendor, Plan Plan, Window FiveHour, Window 
 }
 public static class Presentation
 {
-    public static bool SignInExpired(Fault fault) => fault is Fault.SignIn or Fault.RefreshFailed;
+    public static bool SignInExpired(Fault fault) => fault == Fault.SignIn;
     public static bool CanSignInAgain(Snapshot snapshot) => snapshot.Vendor == Vendor.Grok && SignInExpired(snapshot.Fault);
     public static string Color(double? percent, bool dark) => percent is null ? (dark ? "#636366" : "#AEAEB2") :
         percent >= 50 ? (dark ? "#30D158" : "#34C759") : percent >= 20 ? (dark ? "#FF9F0A" : "#FF9500") : (dark ? "#FF453A" : "#FF3B30");

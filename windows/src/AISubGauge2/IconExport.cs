@@ -9,13 +9,17 @@ public static class IconExport
 {
     public static void Save(string directory)
     {
+        LocalPathSafety.RejectReparsePoints(directory);
+        if (Directory.Exists(directory) && Directory.EnumerateFileSystemEntries(directory).Any())
+            throw new IOException("Icon export requires an empty directory.");
         Directory.CreateDirectory(directory);
+        LocalPathSafety.RejectReparsePoints(directory);
         (Vendor Vendor, int Percent)[] examples = [(Vendor.Codex, 72), (Vendor.Claude, 35), (Vendor.Grok, 8)];
         foreach (bool dark in new[] { false, true })
         {
             string theme = dark ? "dark" : "light";
             var families = examples.Select(e => new TrayIconFamily(e.Vendor, e.Percent, dark)).ToArray();
-            Capture.SaveTrayIconFiles(directory, theme, families, dark);
+            Capture.SaveTrayIconFiles(directory, theme, families, dark, createNew: true);
             foreach (bool showPercentage in new[] { true, false })
             {
                 string mode = showPercentage ? "percent" : "no-percent";
@@ -30,18 +34,20 @@ public static class IconExport
                     var example = examples[col];
                     string name = $"{example.Vendor.ToString().ToLowerInvariant()}-{example.Percent}-{theme}-{mode}-{size}px";
                     using var native = RingIcon.TrayBitmap(example.Vendor, example.Percent, dark, size, showPercentage);
-                    native.Save(Path.Combine(directory, name + ".png"), ImageFormat.Png);
+                    SaveNew(native, Path.Combine(directory, name + ".png"));
                     using var enlarged = Enlarge(native, 8);
-                    enlarged.Save(Path.Combine(directory, name + "-8x.png"), ImageFormat.Png);
+                    SaveNew(enlarged, Path.Combine(directory, name + "-8x.png"));
                     UiPaint.Text(g, $"{example.Vendor} {example.Percent} / {size}px / 1x + 8x", new(col * cell + 8, row * rowHeight, cell - 16, 28), dark ? Color.White : Color.Black, 14);
                     g.DrawImageUnscaled(native, col * cell + (cell - size) / 2, row * rowHeight + 30);
                     g.DrawImageUnscaled(enlarged, col * cell + (cell - size * 8) / 2, row * rowHeight + 102);
                 }
-                sheet.Save(Path.Combine(directory, $"mac-compare-{theme}-{mode}.png"), ImageFormat.Png);
+                SaveNew(sheet, Path.Combine(directory, $"mac-compare-{theme}-{mode}.png"));
             }
         }
         SaveOverview(directory, examples);
-        File.WriteAllText(Path.Combine(directory, "README.txt"),
+        using var readmeFile = NewFile(Path.Combine(directory, "README.txt"));
+        using var readme = new StreamWriter(readmeFile);
+        readme.Write(
             "Offline Mac v9 design-proportion comparison, not a desktop capture.\n" +
             "Codex 72 / Claude 35 / Grok 8; reviewed Windows logo masks only.\n" +
             "Native 16,20,24,32,40,48,64px and exact nearest-neighbor 8x PNGs; both percentage modes.\n" +
@@ -83,7 +89,19 @@ public static class IconExport
                 g.DrawImageUnscaled(enlarged, col * cell + 32, row * height + 132);
             }
         }
-        sheet.Save(Path.Combine(directory, "mac-compare-overview.png"), ImageFormat.Png);
+        SaveNew(sheet, Path.Combine(directory, "mac-compare-overview.png"));
+    }
+
+    internal static FileStream NewFile(string path)
+    {
+        LocalPathSafety.RejectReparsePoints(path);
+        return new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+    }
+
+    private static void SaveNew(Bitmap bitmap, string path)
+    {
+        using var stream = NewFile(path);
+        bitmap.Save(stream, ImageFormat.Png);
     }
 
     internal static Bitmap Enlarge(Bitmap source, int scale)

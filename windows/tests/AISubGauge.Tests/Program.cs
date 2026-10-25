@@ -18,6 +18,11 @@ internal static partial class Program
     {
         if (args.Length > 0)
         {
+            if (args.Length == 1 && args[0] == "--hardening")
+            {
+                RunLocalHardeningTests();
+                Console.WriteLine($"Hardening: {passed} PASS, {failed} FAIL"); return failed == 0 ? 0 : 1;
+            }
             if (args.Length == 1 && args[0] == "--grok-signin")
             {
                 RunGrokSignInTests();
@@ -27,6 +32,7 @@ internal static partial class Program
             RunPackagingTests();
             Console.WriteLine($"Packaging: {passed} PASS, {failed} FAIL"); return failed == 0 ? 0 : 1;
         }
+        RunLocalHardeningTests();
         RunSecurityTests();
         RunTrayIconTests();
         RunTrayPercentageTests();
@@ -307,7 +313,7 @@ internal static partial class Program
         AsyncTest("Codex rejects API key account", async () =>
         {
             var rpc = new FakeRpc((id, _) => Parse(id == 2 ? "{\"account\":{\"type\":\"apiKey\"}}" : "{}"));
-            var provider = new CodexProvider(Clock, new(new()), () => rpc); Equal((await provider.FetchAsync()).Fault, Fault.SignIn);
+            var provider = new CodexProvider(Clock, new(new()), () => rpc); Equal((await provider.FetchAsync()).Fault, Fault.SignInRequired);
         });
         Test("Grok cache validity and no invented 5-hour window", () =>
         {

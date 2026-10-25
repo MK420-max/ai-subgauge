@@ -9,6 +9,7 @@ internal static partial class Program
 {
     private static void RunGrokSignInTests()
     {
+        RunGrokHardeningTests();
         foreach (var status in new[] { HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden })
         {
             AsyncTest($"Grok billing {(int)status} is localized sign-in expired, including retry", async () =>
@@ -36,30 +37,30 @@ internal static partial class Program
                 Check(lines.Single().Contains($"stage=refresh-http fault=SignIn http={(int)status}"));
             });
         }
-        AsyncTest("Grok stale sign-in / failed refresh RPC stays expired without cache fallback", async () =>
+        AsyncTest("Grok generic refresh RPC failure is network without cache fallback", async () =>
         {
             var cache = new CountingCache(); var lines = new List<string>();
             var refresh = new GrokCliRefresh(ValidSource(), Clock, _ => new FakeRpc((_, _) => throw new Exception(Secret)));
             using var provider = new SubscriptionProvider(Vendor.Grok, ExpiredSource(), Clock, new(), new(new(), lines.Add),
                 new Handler(_ => throw new InvalidOperationException()), refresh, cache);
-            AssertExpired(await provider.FetchAsync(), Fault.RefreshFailed);
-            Equal(cache.Count, 0); Check(lines.Single().Contains("stage=refresh-rpc fault=RefreshFailed"));
+            AssertNotExpired(await provider.FetchAsync(), Fault.Network);
+            Equal(cache.Count, 0); Check(lines.Single().Contains("stage=refresh-rpc fault=Network"));
         });
         AsyncTest("Grok billing 401 then failed refresh logs each failing stage once", async () =>
         {
             var lines = new List<string>();
             using var provider = new SubscriptionProvider(Vendor.Grok, ValidSource(), Clock, new(), new(new(), lines.Add),
                 new Handler(_ => Response("ignored", HttpStatusCode.Unauthorized)), new ThrowingRefresh(new Exception(Secret)));
-            AssertExpired(await provider.FetchAsync(), Fault.RefreshFailed);
+            AssertNotExpired(await provider.FetchAsync(), Fault.Network);
             Equal(lines.Count, 2);
             Check(lines[0].Contains("stage=billing-http fault=SignIn http=401"));
-            Check(lines[1].Contains("stage=refresh-rpc fault=RefreshFailed"));
+            Check(lines[1].Contains("stage=refresh-rpc fault=Network"));
         });
-        AsyncTest("Grok premature RPC EOF remains a refresh failure requiring sign-in", async () =>
+        AsyncTest("Grok premature RPC EOF is network, not expired", async () =>
         {
             var refresh = new GrokCliRefresh(ValidSource(), Clock, _ => new FakeRpc((_, _) => throw new SafeFailure(Fault.InvalidData)));
             using var provider = Make(Vendor.Grok, new Handler(_ => throw new InvalidOperationException()), ExpiredSource(), refresh);
-            AssertExpired(await provider.FetchAsync(), Fault.RefreshFailed);
+            AssertNotExpired(await provider.FetchAsync(), Fault.Network);
         });
         AsyncTest("Grok refresh RPC preserves structured HTTP auth and server errors", async () =>
         {
@@ -89,18 +90,18 @@ internal static partial class Program
             using var server = Make(Vendor.Grok, new Handler(_ => Response("ignored", HttpStatusCode.InternalServerError)), ValidSource());
             Equal((await server.FetchAsync()).Fault, Fault.Network);
         });
-        AsyncTest("Grok refresh cancellation remains timeout", async () =>
+        AsyncTest("Grok refresh cancellation is network", async () =>
         {
             using var provider = Make(Vendor.Grok, new Handler(_ => throw new InvalidOperationException()), ExpiredSource(),
                 new ThrowingRefresh(new OperationCanceledException()));
-            Equal((await provider.FetchAsync()).Fault, Fault.Timeout);
+            Equal((await provider.FetchAsync()).Fault, Fault.Network);
         });
         AsyncTest("failure logs identify credential read and parse stages", async () =>
         {
             var lines = new List<string>();
             using var missing = new SubscriptionProvider(Vendor.Grok, new MissingCredentials(), Clock, new(), new(new(), lines.Add));
-            AssertExpired(await missing.FetchAsync(), Fault.SignIn);
-            Check(lines.Single().Contains("stage=read-credentials fault=SignIn")); lines.Clear();
+            AssertNotExpired(await missing.FetchAsync(), Fault.SignInRequired);
+            Check(lines.Single().Contains("stage=read-credentials fault=SignInRequired")); lines.Clear();
             using var malformed = new SubscriptionProvider(Vendor.Grok, ValidSource(), Clock, new(), new(new(), lines.Add), new Handler(_ => Response("{broken")));
             Equal((await malformed.FetchAsync()).Fault, Fault.InvalidData);
             Check(lines.Single().Contains("stage=parse fault=InvalidData"));
@@ -163,7 +164,7 @@ internal static partial class Program
             var locations = new CliLocations(@"C:\Fixture\Local", @"C:\Fixture\Roaming", @"C:\Fixture\Profile With Spaces");
             string path = Path.Combine(locations.Profile, ".grok", "bin", "grok.exe");
             var files = new FakeExecutableFiles(path);
-            var resolver = new ExecutableResolver(files, new FakeSignatures(new(SignatureStatus.Unsigned)), locations);
+            var resolver = new ExecutableResolver(files, new FakeSignatures(GrokFixture()), locations);
             var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             int starts = 0;
             var launcher = new GrokSignIn(() => Task.FromResult(resolver.Resolve("grok")), info =>
@@ -183,7 +184,7 @@ internal static partial class Program
         {
             int starts = 0;
             var locations = new CliLocations(@"C:\Fixture\Local", @"C:\Fixture\Roaming", @"C:\Fixture\Profile");
-            var resolver = new ExecutableResolver(new FakeExecutableFiles(@"C:\Fixture\evil.exe"), new FakeSignatures(new(SignatureStatus.Unsigned)), locations);
+            var resolver = new ExecutableResolver(new FakeExecutableFiles(@"C:\Fixture\evil.exe"), new FakeSignatures(GrokFixture()), locations);
             var rejected = new GrokSignIn(() => Task.FromResult(resolver.Resolve("grok", @"C:\Fixture\evil.exe")), _ => { starts++; return Task.CompletedTask; });
             for (int i = 0; i < 2; i++)
             {
@@ -223,7 +224,7 @@ internal static partial class Program
             foreach (string line in File.ReadLines(Path.Combine(Environment.CurrentDirectory, "src", "AISubGauge.Core", "strings-source.txt")))
             {
                 var parts = line.Split('|');
-                if (parts[0] is not ("SignInExpired" or "SignInAgain")) continue;
+                if (parts[0] is not ("SignInExpired" or "SignInAgain" or "FaultGrokCliNotInstalled" or "FaultGrokVerificationFailed" or "FaultSignInRequired" or "FaultRefreshFailed")) continue;
                 Equal(new Texts("zh-CN")[parts[0]], parts[1]); Equal(new Texts("en")[parts[0]], parts[2]);
             }
         });

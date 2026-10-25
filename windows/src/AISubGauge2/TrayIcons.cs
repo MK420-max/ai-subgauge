@@ -35,7 +35,12 @@ public sealed class TrayIconFamily
         return stream.ToArray();
     }
 
-    public void Save(string path) => File.WriteAllBytes(path, ToIco());
+    public void Save(string path, bool createNew = false)
+    {
+        if (!createNew) { File.WriteAllBytes(path, ToIco()); return; }
+        using var stream = IconExport.NewFile(path);
+        stream.Write(ToIco());
+    }
 
     public static int BestSize(int requestedSize)
     {
@@ -55,7 +60,7 @@ public sealed class TrayIconFamily
     }
 
     // The sheet enlarges the actual native pixels with nearest-neighbor, so antialiasing is reviewable.
-    public static void SaveContactSheet(string path, IReadOnlyList<(string Label, TrayIconFamily Family)> families, bool dark)
+    public static void SaveContactSheet(string path, IReadOnlyList<(string Label, TrayIconFamily Family)> families, bool dark, bool createNew = false)
     {
         const int cellWidth = 284, rowHeight = 380;
         using var sheet = new Bitmap(cellWidth * Sizes.Count, rowHeight * families.Count);
@@ -70,7 +75,8 @@ public sealed class TrayIconFamily
             g.DrawImageUnscaled(bitmap, x + (cellWidth - size) / 2, y + 32);
             g.DrawImage(bitmap, new Rectangle(x + (cellWidth - size * 4) / 2, y + 108, size * 4, size * 4), 0, 0, size, size, GraphicsUnit.Pixel);
         }
-        sheet.Save(path, ImageFormat.Png);
+        if (createNew) { using var stream = IconExport.NewFile(path); sheet.Save(stream, ImageFormat.Png); }
+        else sheet.Save(path, ImageFormat.Png);
     }
 
     [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr CreateIconFromResourceEx(byte[] bits, uint length, [MarshalAs(UnmanagedType.Bool)] bool icon, uint version, int width, int height, uint flags);

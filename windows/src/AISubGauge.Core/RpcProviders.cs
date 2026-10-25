@@ -32,7 +32,7 @@ public sealed class RpcSession : IRpcSession
             if (Environment.GetEnvironmentVariable(key) is string value) info.Environment[key] = value;
         if (environment is not null) foreach (var pair in environment) info.Environment[pair.Key] = pair.Value;
         process = new Process { StartInfo = info };
-        if (!process.Start()) { process.Dispose(); throw new SafeFailure(Fault.SignIn); }
+        if (!process.Start()) { process.Dispose(); throw new SafeFailure(Fault.Network); }
         ActiveProcessIds.TryAdd(process.Id, 0);
         drain = process.StandardError.BaseStream.CopyToAsync(Stream.Null, lifetime.Token);
     }
@@ -66,7 +66,11 @@ public sealed class RpcSession : IRpcSession
         var data = Json.Get(error, "data");
         double? number = Json.Number(data, "statusCode") ?? Json.Number(data, "status") ?? Json.Number(error, "code");
         int? status = number is >= 100 and <= 599 && number == Math.Truncate(number.Value) ? (int)number.Value : null;
-        return new(status is >= 500 ? Fault.Network : Fault.SignIn, httpStatus: status);
+        // Match explicit auth codes/messages, never a substring in an arbitrary server error.
+        bool unauthenticated = new[] { Json.String(error, "code"), Json.String(data, "code"),
+            Json.String(data, "type"), Json.String(data, "status"), Json.String(data, "error"), Json.String(error, "message") }
+            .Any(value => value?.ToLowerInvariant() is "unauthenticated" or "unauthorized" or "invalid_grant" or "invalid_token");
+        return new(status is 401 or 403 || unauthenticated ? Fault.SignIn : Fault.Network, httpStatus: status);
     }
     private async Task<string> ReadLine(CancellationToken cancellation)
     {
@@ -99,7 +103,7 @@ public sealed class CodexProvider(IClock clock, SafeLog log, Func<IRpcSession>? 
         await rpc.CallAsync(1, "initialize", new { clientInfo = new { name = "aisubgauge2", version = "2.0.0" } }, cancellation).ConfigureAwait(false);
         await rpc.NotifyAsync("initialized", cancellation).ConfigureAwait(false);
         var account = Json.Get(await rpc.CallAsync(2, "account/read", new { refreshToken = false }, cancellation).ConfigureAwait(false), "account");
-        if (Json.String(account, "type") != "chatgpt") throw new SafeFailure(Fault.SignIn);
+        if (Json.String(account, "type") != "chatgpt") throw new SafeFailure(Fault.SignInRequired);
         var plan = Presentation.ParsePlan(Json.String(account, "planType"));
         var result = await rpc.CallAsync(3, "account/rateLimits/read", null, cancellation).ConfigureAwait(false);
         var bucket = Json.Get(Json.Get(result, "rateLimitsByLimitId"), "codex");
@@ -153,7 +157,7 @@ public sealed class GrokCliRefresh(ICredentialSource source, IClock clock, Func<
         {
             var stage = error is HttpRequestException || error is SafeFailure { HttpStatus: not null }
                 ? FailureStage.RefreshHttp : FailureStage.RefreshRpc;
-            throw SafeFailure.Classify(error, stage, Fault.RefreshFailed);
+            throw SafeFailure.Classify(error, stage, Fault.Network);
         }
         finally
         {

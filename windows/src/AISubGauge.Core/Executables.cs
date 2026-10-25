@@ -31,7 +31,7 @@ public sealed class ExecutableResolver(IExecutableFiles files, IExecutableSignat
 {
     public VerifiedExecutable Resolve(string name, string? configured = null, bool allowUnsignedCodexNpm = false)
     {
-        if (name is not ("codex" or "grok")) throw new SafeFailure(Fault.SignIn);
+        if (name is not ("codex" or "grok")) throw new SafeFailure(Fault.SignInRequired);
         bool custom = !string.IsNullOrWhiteSpace(configured);
         var candidates = custom ? new[] { configured! } : Candidates(name);
         ExecutableVerification failure = new(VerificationStatus.NotFound, custom ? ExecutableLocation.Override : ExecutableLocation.None);
@@ -64,15 +64,23 @@ public sealed class ExecutableResolver(IExecutableFiles files, IExecutableSignat
                     if (signature.Status == SignatureStatus.Unsigned && !(location == ExecutableLocation.Npm && allowUnsignedCodexNpm))
                     { failure = new(VerificationStatus.Unsigned, location); continue; }
                 }
+                else if (!GrokPublisher.Accepts(signature))
+                {
+                    failure = new(signature.Status == SignatureStatus.Unsigned ? VerificationStatus.Unsigned : VerificationStatus.PublisherMismatch, location, signer);
+                    continue;
+                }
                 var result = new VerifiedExecutable(path, custom, lease, signature.Status == SignatureStatus.Unsigned, location, signer);
                 lease = null; return result;
             }
-            catch { /* Fail closed; never include paths or verifier errors in status text. */ }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
+            catch { failure = failure with { Status = VerificationStatus.Invalid }; /* Fail closed without exposing paths. */ }
             finally { lease?.Dispose(); }
         }
         throw new SafeFailure(failure.Status switch
         {
-            VerificationStatus.NotFound => Fault.SignIn,
+            VerificationStatus.NotFound => name == "grok" ? Fault.GrokCliNotInstalled : Fault.SignInRequired,
+            _ when name == "grok" => Fault.GrokVerificationFailed,
             VerificationStatus.VerifierBusy or VerificationStatus.VerifierTimeout => Fault.VerifierUnresponsive,
             _ => Fault.VerificationFailed
         }, failure);
@@ -115,7 +123,7 @@ public static class Executables
     private static readonly ExecutableResolver Resolver = new(new ExecutableFiles(), new AuthenticodeSignatures(), new(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)));
+        Environment.GetEnvironmentVariable("USERPROFILE") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)));
     private static int customCodex, customGrok, unsignedCodex;
     public static bool UnsignedCodexInUse => Volatile.Read(ref unsignedCodex) != 0;
     public static bool CustomPathInUse(Vendor vendor) => vendor switch
@@ -175,6 +183,21 @@ public static class CodexPublisher
         }
         catch { return null; }
     }
+}
+
+public static class GrokPublisher
+{
+    public const string Organization = "X.AI LLC";
+    // SSL.com EV Code Signing Intermediate CA RSA R3 / EV Root Certification Authority RSA R2.
+    public const string IntermediateThumbprint = "D2953DBA95086FEB5805BEFC41283CA64C397DF5";
+    public const string RootThumbprint = "743AF0529BD032A0F44A83CDD4BAA97B7C2EC49A";
+
+    public static bool Accepts(ExecutableSignature signature) =>
+        signature.Status == SignatureStatus.Valid &&
+        string.Equals(CodexPublisher.ReadOrganization(signature.Subject), Organization, StringComparison.Ordinal) &&
+        signature.ChainThumbprints is { Count: >= 3 } chain &&
+        string.Equals(chain[^1], RootThumbprint, StringComparison.Ordinal) &&
+        chain.Skip(1).SkipLast(1).Contains(IntermediateThumbprint, StringComparer.Ordinal);
 }
 
 // Bound the entire native operation, including trust-state cleanup. No native work on the UI thread.

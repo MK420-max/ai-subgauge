@@ -79,14 +79,16 @@ public sealed class SafeFailure(Fault fault, ExecutableVerification? verificatio
         if (error is SafeFailure safe)
         {
             var kind = safe.HttpStatus is 401 or 403 ? Fault.SignIn : safe.Fault;
-            if (kind == Fault.InvalidData && fallback == Fault.RefreshFailed) kind = Fault.RefreshFailed;
+            if (kind == Fault.InvalidData && fallback == Fault.Network) kind = Fault.Network;
+            if (kind == Fault.Timeout) kind = Fault.Network;
             return new(kind, safe.Verification, safe.Stage ?? stage, safe.HttpStatus);
         }
         int? status = error is HttpRequestException http && http.StatusCode is { } code ? (int)code : null;
         return new(status is 401 or 403 ? Fault.SignIn : error switch
         {
-            HttpRequestException => Fault.Network, OperationCanceledException => Fault.Timeout,
-            FileNotFoundException or DirectoryNotFoundException => Fault.SignIn, _ => fallback
+            HttpRequestException or OperationCanceledException or TimeoutException => Fault.Network,
+            System.IO.IOException when stage is FailureStage.RefreshRpc or FailureStage.UsageRpc => Fault.Network,
+            FileNotFoundException or DirectoryNotFoundException => Fault.SignInRequired, _ => fallback
         }, stage: stage, httpStatus: status);
     }
     public static async Task<T> AtAsync<T>(FailureStage stage, Func<Task<T>> action)
