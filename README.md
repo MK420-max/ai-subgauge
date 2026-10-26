@@ -11,7 +11,7 @@ Your AI subscription quotas, at a glance in the macOS menu bar or Windows tray.
 [![macOS](https://img.shields.io/badge/macOS-26%2B-000000?logo=apple&logoColor=white)](#macos)
 [![Windows](https://img.shields.io/badge/Windows-x64-0078D6?logo=windows&logoColor=white)](#windows)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Mac version](https://img.shields.io/badge/Mac-2.0.4%20%28build%20204%29-blue)](#macos)
+[![Mac version](https://img.shields.io/badge/Mac-2.0.3%20%28build%20204%29-blue)](#macos)
 [![Windows version](https://img.shields.io/badge/Windows-2.0.0-blue)](#windows)
 [![GitHub stars](https://img.shields.io/github/stars/MK420-max/ai-subgauge?style=social)](https://github.com/MK420-max/ai-subgauge/stargazers)
 
@@ -63,13 +63,13 @@ Keep track of remaining quota, reset times and refresh errors without opening ea
 | OpenAI API, Anthropic API, xAI API | API key | — |
 | DeepSeek API, OpenRouter API, MiniMax API | API key | — |
 
-API availability depends on the provider and plan. See the [macOS provider guide](mac/AI_SUPPORT.md). The [legacy Windows 1.x guide](windows/README.md) also documents Gemini, GitHub Copilot, Kimi Code and GLM / z.ai readers; the Windows 2.0 package described here focuses on Codex, Claude and Grok Bot.
+API availability depends on the provider and plan. See the [macOS provider guide](mac/AI_SUPPORT.md) and [Windows 2.0 quota sources](windows/README.md#凭据与额度来源). The Windows 2.0 package described here focuses on Codex, Claude and Grok Bot.
 
 ## Installation
 
 ### macOS
 
-**Mac 2.0.4 · build 204 · Apple Silicon**
+**Mac 2.0.3 · build 204 · Apple Silicon**
 
 > The deployment target supports **macOS 26.0 or later**. The app has **not been tested on real hardware running macOS 26**. Menu bar icon detection and collection still need verification on that system.
 
@@ -105,7 +105,7 @@ No administrator rights are required. Installation creates a Start menu shortcut
 | Settings | `%LOCALAPPDATA%\AISubGauge2\settings.json` |
 | Log | `%LOCALAPPDATA%\AISubGauge2\logs\app.log` |
 
-Version 2.0 can coexist with 1.x. Uninstall with the Start menu shortcut or `uninstall.ps1` in the installation directory; add `-KeepSettings` to retain settings. The older WindowsQuotaTray migration applies to the [legacy Windows app](windows/README.md#migration-from-windowsquotatray).
+Version 2.0 can coexist with 1.x. Uninstall with the Start menu shortcut or `uninstall.ps1` in the installation directory; add `-KeepSettings` to retain settings. See the [Windows installation and coexistence guide](windows/README.md#与-1x-并行).
 
 ## Getting started
 
@@ -148,7 +148,7 @@ Earlier bilingual previews with demo data; the bottom row includes a Windows ref
 - **Limited process detection.** Visibility checks read process names only, never command lines, executable paths or process memory.
 - **Controlled renewal.** Login reads do not rewrite credentials. The official Grok CLI can update its own login during renewal; the app then restricts credential permissions. Insecure credential files are refused. Official CLI execution is subject to platform signature checks, with the explicit Windows npm opt-in described above.
 
-Optional macOS weather requests send the configured city coordinates to Open-Meteo. See [macOS privacy](mac/PRIVACY.md), [macOS security](mac/docs/SECURITY.md) and [legacy Windows security](windows/docs/SECURITY.md) for details.
+Optional macOS weather requests send the configured city coordinates to Open-Meteo. See [macOS privacy](mac/PRIVACY.md), [macOS security](mac/docs/SECURITY.md) and [Windows credentials and security](windows/README.md#凭据与额度来源) for details.
 
 ## Build from source
 
@@ -170,23 +170,14 @@ Outputs go to `mac/dist/`: `AI SubGauge.app`, `AI SubGauge.zip` and, if requeste
 
 ### Windows build
 
-Use Windows, PowerShell and the .NET 8 SDK with Windows Desktop support. From the repository root, build the checked-in solution:
+Use Windows, PowerShell and the .NET 8 SDK with Windows Desktop support. The `windows/` directory contains the Windows 2.0 source, including `build.ps1`, `install.ps1`, `uninstall.ps1`, `src/` and `tests/`. From the repository root:
 
 ```powershell
 cd windows
-dotnet restore .\AISubGauge.sln --locked-mode
-dotnet build .\AISubGauge.sln -c Release --no-restore
-dotnet test .\tests\AISubGauge.Tests\AISubGauge.Tests.csproj -c Release --no-build
-dotnet publish .\src\AISubGauge\AISubGauge.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o .\publish\win-x64
-```
-
-This checkout's `windows/` directory still contains the legacy solution, which produces `AISubGauge.exe`; see its [build guide](windows/README.md#build-test-and-install). The Windows 2.0 packaging source described in the installation instructions uses the following command and writes to `artifacts\`:
-
-```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-Run that command from the Windows 2.0 source directory. Its `build.ps1` is not included in this checkout; the legacy solution commands above do not produce the 2.0 installer.
+The script builds, tests and packages Windows 2.0. Outputs go to `artifacts\` inside `windows/`, including the self-contained `publish\AISubGauge2.exe`, portable ZIP and installer (when IExpress is available). See the [Windows build and test guide](windows/README.md#构建与测试).
 
 ## Project structure
 
