@@ -22,18 +22,20 @@ public sealed class SafeLog(Redactor redactor, Action<string>? sink = null, stri
     private static readonly object FileSync = new();
     public const int MaxBytes = 1024 * 1024;
     public static string DefaultDirectory => Path.Combine(SettingsStore.DefaultDirectory, "logs");
-    public void Write(Vendor vendor, Fault fault, FailureStage stage = FailureStage.UsageRpc, int? httpStatus = null)
+    public void Write(Vendor vendor, Fault fault, FailureStage stage = FailureStage.UsageRpc, int? httpStatus = null, ExecutableVerification? verification = null)
     {
         if (fault == Fault.None) return;
         // All fields are closed enums or bounded numbers; no exception text, credentials or paths.
         try
         {
             string line = $"{DateTimeOffset.UtcNow:O} vendor={vendor} stage={StageName(stage)} fault={fault}" +
-                (httpStatus is >= 100 and <= 599 ? $" http={httpStatus}" : "");
+                (httpStatus is >= 100 and <= 599 ? $" http={httpStatus}" : "") +
+                (verification is null ? "" : $" verification={Closed(verification.Status)} verificationStage={Closed(verification.Stage)}");
             Emit(redactor.Clean(line));
         }
         catch { }
     }
+    private static string Closed<T>(T value) where T : struct, Enum => Enum.IsDefined(value) ? value.ToString() : "Unknown";
     private static string StageName(FailureStage stage) => stage switch
     {
         FailureStage.ReadCredentials => "read-credentials", FailureStage.RefreshRpc => "refresh-rpc",
@@ -41,10 +43,10 @@ public sealed class SafeLog(Redactor redactor, Action<string>? sink = null, stri
         FailureStage.UsageHttp => "usage-http", FailureStage.Parse => "parse", FailureStage.Cache => "cache",
         FailureStage.SignInLaunch => "sign-in-launch", _ => "usage-rpc"
     };
-    private void Emit(string line)
+    private void Emit(string line, string? observerValue = null)
     {
         // A broken observer must not prevent file logging (or escape into a provider).
-        try { sink?.Invoke(line); } catch { }
+        try { sink?.Invoke(observerValue ?? line); } catch { }
         if (directory is null) return; // Tests and non-app consumers opt in explicitly.
         try
         {
@@ -62,10 +64,10 @@ public sealed class SafeLog(Redactor redactor, Action<string>? sink = null, stri
     public void Write(LocalStatus status)
     {
         // Diagnostics must never interrupt startup or cleanup, even if the sink fails.
-        try { if (sink is null) System.Diagnostics.Trace.WriteLine(status.ToString()); else sink(status.ToString()); } catch { }
+        try { Emit($"{DateTimeOffset.UtcNow:O} local={Closed(status)}", Closed(status)); } catch { }
     }
 }
-public enum LocalStatus { AutostartFailed, RefreshCleanupFailed, VerifierBusyRepeated }
+public enum LocalStatus { AutostartFailed, RefreshCleanupFailed, VerifierBusyRepeated, LastGoodReadFailed, LastGoodWriteFailed }
 public enum FailureStage { ReadCredentials, RefreshRpc, RefreshHttp, BillingHttp, UsageHttp, UsageRpc, Parse, Cache, SignInLaunch }
 public sealed class SafeFailure(Fault fault, ExecutableVerification? verification = null,
     FailureStage? stage = null, int? httpStatus = null) : Exception("Subscription request failed.")

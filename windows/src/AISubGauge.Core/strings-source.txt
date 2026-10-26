@@ -71,3 +71,7 @@ FaultVerifierUnresponsive|签名校验未响应，请重启 AI SubGauge|Signatur
 FaultGrokCliNotInstalled|未安装 Grok CLI|Grok CLI not installed
 FaultGrokVerificationFailed|Grok CLI 签名验证失败：必须由 X.AI LLC 签名并通过受信任证书链验证。请重新安装官方 Grok CLI。|Grok CLI signature verification failed: a valid X.AI LLC signature and pinned certificate chain are required. Reinstall the official Grok CLI.
 FaultSignInRequired|请在对应应用中登录|Sign in to the corresponding app
+GrokSignInExpired|登录已过期，点重新登录|Sign-in expired — click Sign in again
+GrokVerificationShort|Grok CLI 签名验证失败|Grok CLI verification failed
+StaleValue|{0}（旧数据，更新于 {1}）|{0} (stale, as of {1})
+GrokVerifierRetrying|签名验证暂不可用，稍后重试|Signature check unavailable — retrying

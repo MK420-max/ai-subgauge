@@ -79,7 +79,7 @@ internal static partial class Program
             }
             Equal(signatures.Calls, 0);
         });
-        AsyncTest("RPC internal error, timeout, network and missing CLI during expired-token refresh are not expiry", async () =>
+        AsyncTest("expired-token refresh retains underlying fault and offers sign-in; verification stays distinct", async () =>
         {
             foreach (var error in new Exception[]
             {
@@ -90,7 +90,15 @@ internal static partial class Program
             {
                 var refresh = new GrokCliRefresh(ValidSource(), Clock, _ => new FakeRpc((_, _) => throw error));
                 using var provider = Make(Vendor.Grok, new Handler(_ => throw new InvalidOperationException()), ExpiredSource(), refresh);
-                AssertNotExpired(await provider.FetchAsync(), error is SafeFailure { Fault: Fault.GrokCliNotInstalled or Fault.GrokVerificationFailed } safe ? safe.Fault : Fault.Network);
+                var result = await provider.FetchAsync();
+                var expected = error is SafeFailure { Fault: Fault.GrokCliNotInstalled or Fault.GrokVerificationFailed } safe ? safe.Fault : Fault.Network;
+                Equal(result.Fault, expected);
+                if (expected == Fault.GrokVerificationFailed)
+                {
+                    Equal(result.GrokState, GrokState.VerificationFailed);
+                    Check(!Presentation.CanSignInAgain(result));
+                }
+                else AssertExpired(result, expected);
             }
             foreach (Exception error in new Exception[] { new TimeoutException(), new OperationCanceledException(), new HttpRequestException() })
             {

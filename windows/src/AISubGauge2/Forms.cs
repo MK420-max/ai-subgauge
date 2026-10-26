@@ -86,7 +86,7 @@ public sealed class PanelForm : RoundedForm
         int index = App.VisibleSnapshots.ToList().FindIndex(Presentation.CanSignInAgain);
         signIn.Visible = index >= 0;
         signIn.Enabled = !App.SigningIn;
-        if (index >= 0) Place(signIn, 325, 65 + index * 72 + 30, 128, 30);
+        if (index >= 0) Place(signIn, 325, 65 + index * 72 + 3, 128, 26);
     }
     protected override void Draw(Graphics g)
     {
@@ -104,14 +104,16 @@ public sealed class PanelForm : RoundedForm
                 if (i > 0) { using var pen = new Pen(P.Border); g.DrawLine(pen, 78, y, 454, y); }
                 RingIcon.Draw(g, new(23, y + 12, 48, 48), item.Vendor, item.FiveHour.Percent ?? item.Weekly.Percent, P.Dark);
                 UiPaint.NameAndPlan(g, T.Name(item.Vendor), T.PlanName(item.Plan), 83, y + 8,
-                    item.Vendor == Vendor.Codex && Executables.UnsignedCodexInUse ? 185 : 258, P);
-                bool restart = item.Fault == Fault.VerifierUnresponsive;
+                    item.Vendor == Vendor.Codex && Executables.UnsignedCodexInUse ? 185 : Presentation.CanSignInAgain(item) ? 315 : 258, P);
+                bool restart = item.Vendor != Vendor.Grok && item.Fault == Fault.VerifierUnresponsive;
                 bool expired = Presentation.CanSignInAgain(item);
-                UiPaint.Text(g, CodexRowPresentation.PanelStatus(T, item, App.Clock.Now),
-                    restart ? new(83, y + 30, 371, 38) : new(83, y + 34, expired ? 238 : 174, 23), P.Secondary, 10.5f, wrap: restart);
+                bool grokFailure = item.Vendor == Vendor.Grok && item.Fault != Fault.None;
+                UiPaint.Text(g, grokFailure ? T.FailureReason(item) : CodexRowPresentation.PanelStatus(T, item, App.Clock.Now),
+                    restart ? new(83, y + 30, 371, 38) : new(83, y + 30, grokFailure ? 371 : 174, 23), P.Secondary, 10.5f, wrap: restart);
+                if (grokFailure && item.Stale) UiPaint.Text(g, T.StaleValue(item), new(83, y + 51, 371, 17), P.Secondary, 9);
                 if (item.Vendor == Vendor.Codex && Executables.UnsignedCodexInUse)
                     CodexRowPresentation.DrawBadge(g, T, P, 189, y + 8);
-                if (!restart && !expired) { RowBar(g, item.FiveHour, 268, y + 12); RowBar(g, item.Weekly, 268, y + 37); }
+                if (!restart && !expired && !grokFailure) { RowBar(g, item.FiveHour, 268, y + 12); RowBar(g, item.Weekly, 268, y + 37); }
             }
         }
         UiPaint.Text(g, App.Refreshing ? T["Refreshing"] : T.Updated(App.Updated), new(20, 294, 205, 30), P.Secondary, 10.5f);
@@ -148,7 +150,7 @@ public sealed class SettingsForm : RoundedForm
                 Controls.Add(toggle);
             }
             Button("RefreshNow", 220, 421, 120, () => _ = App.RefreshAsync());
-            signIn = SignInLink(); Place(signIn, 500, 168 + 2 * 76 + 34, 112, 30); UpdateSignIn();
+            signIn = SignInLink(); Place(signIn, 500, 168 + 2 * 76 + 3, 112, 30); UpdateSignIn();
         }
         else
         {
@@ -207,14 +209,16 @@ public sealed class SettingsForm : RoundedForm
                 if (i > 0) { using var pen = new Pen(P.Border); g.DrawLine(pen, 234, y, 760, y); }
                 Logos.Draw(g, item.Vendor, P.Dark, new Rectangle(238, y + 23, 28, 28));
                 UiPaint.NameAndPlan(g, T.Name(item.Vendor), T.PlanName(item.Plan), 281, y + 12,
-                    item.Vendor == Vendor.Codex && Executables.UnsignedCodexInUse ? 512 : 600, P);
-                bool restart = item.Fault == Fault.VerifierUnresponsive;
-                UiPaint.Text(g, CodexRowPresentation.SettingsStatus(T, item),
-                    restart ? new(281, y + 34, 327, 40) : new(281, y + 38, Presentation.CanSignInAgain(item) ? 215 : 327, 23),
+                    item.Vendor == Vendor.Codex && Executables.UnsignedCodexInUse ? 512 : Presentation.CanSignInAgain(item) ? 490 : 600, P);
+                bool restart = item.Vendor != Vendor.Grok && item.Fault == Fault.VerifierUnresponsive;
+                bool grokFailure = item.Vendor == Vendor.Grok && item.Fault != Fault.None;
+                UiPaint.Text(g, grokFailure ? T.FailureReason(item) : CodexRowPresentation.SettingsStatus(T, item),
+                    restart ? new(281, y + 34, 327, 40) : new(281, y + 32, 327, 23),
                     item.Fault == Fault.None ? P.Secondary : ColorTranslator.FromHtml(Presentation.Color(10, P.Dark)), 11, wrap: restart);
+                if (grokFailure && item.Stale) UiPaint.Text(g, T.StaleValue(item), new(281, y + 54, 327, 16), P.Secondary, 9);
                 if (item.Vendor == Vendor.Codex && Executables.UnsignedCodexInUse)
                     CodexRowPresentation.DrawBadge(g, T, P, 520, y + 12);
-                if (!restart && Executables.CustomPathInUse(item.Vendor))
+                if (!restart && !grokFailure && Executables.CustomPathInUse(item.Vendor))
                     UiPaint.Text(g, T[item.Vendor == Vendor.Codex ? "CustomCodexPath" : "CustomGrokPath"], new(281, y + 59, 327, 15), P.Secondary, 9);
                 UiPaint.Text(g, T["TrayShow"], new(615, y + 23, 92, 26), P.Secondary, 11, alignment: StringAlignment.Far);
             }
@@ -226,7 +230,7 @@ public sealed class SettingsForm : RoundedForm
 internal static class CodexRowPresentation
 {
     internal static string PanelStatus(Texts text, Snapshot item, DateTimeOffset now) => item.Fault == Fault.None
-        ? text.Reset(item.FiveHour.Reset ?? item.Weekly.Reset, now) : text.Error(item.Vendor, item.Fault);
+        ? text.Reset(item.FiveHour.Reset ?? item.Weekly.Reset, now) : text.Status(item);
     internal static string SettingsStatus(Texts text, Snapshot item) => text.Status(item);
     internal static string Badge(Texts text, bool unsigned) => unsigned ? text["Unsigned"] : "";
     internal static void DrawBadge(Graphics g, Texts text, Palette palette, int x, int y)

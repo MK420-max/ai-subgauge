@@ -201,4 +201,8 @@
   <data name="FaultGrokCliNotInstalled" xml:space="preserve"><value>Grok CLI not installed</value></data>
   <data name="FaultGrokVerificationFailed" xml:space="preserve"><value>Grok CLI signature verification failed: a valid X.AI LLC signature and pinned certificate chain are required. Reinstall the official Grok CLI.</value></data>
   <data name="FaultSignInRequired" xml:space="preserve"><value>Sign in to the corresponding app</value></data>
+  <data name="GrokSignInExpired" xml:space="preserve"><value>Sign-in expired — click Sign in again</value></data>
+  <data name="GrokVerificationShort" xml:space="preserve"><value>Grok CLI verification failed</value></data>
+  <data name="StaleValue" xml:space="preserve"><value>{0} (stale, as of {1})</value></data>
+  <data name="GrokVerifierRetrying" xml:space="preserve"><value>Signature check unavailable — retrying</value></data>
 </root>
