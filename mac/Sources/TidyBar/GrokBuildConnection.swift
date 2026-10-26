@@ -67,7 +67,7 @@ final class GrokBuildConnection: NSObject, ObservableObject, NSWindowDelegate {
     private func cancel(_ message: String) {
         generation += 1; task?.cancel(); task = nil; deadline?.cancel(); deadline = nil
         session?.invalidateAndCancel(); session = nil
-        process?.terminateAndWait()
+        process?.abandonBestEffort()
         process = nil; isConnecting = false; status = message
     }
 
@@ -129,11 +129,12 @@ final class GrokBuildConnection: NSObject, ObservableObject, NSWindowDelegate {
         let process = try CLIProcess(executable: prepared.executable, arguments: ["login", "--oauth"],
             environment: CLIEnvironment.grok(), directory: prepared.directory)
         self.process = process
-        defer { process.terminateAndWait(); if self.process === process { self.process = nil } }
+        defer { process.abandonBestEffort(); if self.process === process { self.process = nil } }
         onLaunch?(process.processIdentifier)
-        while process.isRunning { try await Task.sleep(nanoseconds: 200_000_000) }
+        while try process.isRunning { try await Task.sleep(nanoseconds: 200_000_000) }
         try Task.checkCancellation()
-        guard process.succeeded else { throw AIUsageError.unavailable(L10n.text("connection.official.grok.sign.in.did.not.complete")) }
+        try process.stopRecordedChild()
+        guard try process.succeeded else { throw AIUsageError.unavailable(L10n.text("connection.official.grok.sign.in.did.not.complete")) }
     }
 
     static func version(_ text: String) throws -> String {

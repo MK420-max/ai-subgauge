@@ -88,10 +88,10 @@ extension TidyBarTests {
         defer { prepared.cleanup() }
         let process = try CLIProcess(executable: prepared.executable, arguments: [], environment: CLIEnvironment.codex(), directory: prepared.directory,
             beforeSpawn: prepared.validateBeforeSpawn, verifySpawned: prepared.validateSpawned)
-        defer { process.terminateAndWait() }
+        defer { process.abandonBestEffort() }
         let deadline = Date().addingTimeInterval(3)
-        while process.isRunning && Date() < deadline { usleep(5_000) }
-        #expect(!process.isRunning && process.succeeded)
+        while try process.isRunning && Date() < deadline { usleep(5_000) }
+        #expect(try !process.isRunning && process.succeeded)
         prepared.cleanup()
         #expect(!FileManager.default.fileExists(atPath: prepared.directory.path))
     }
@@ -321,10 +321,10 @@ extension TidyBarTests {
         }
         let process = try CLIProcess(executable: prepared.executable, arguments: [], environment: CLIEnvironment.codex(), directory: prepared.directory,
             beforeSpawn: prepared.validateBeforeSpawn, verifySpawned: prepared.validateSpawned)
-        defer { process.terminateAndWait() }
+        defer { process.abandonBestEffort() }
         let deadline = Date().addingTimeInterval(3)
-        while process.isRunning && Date() < deadline { usleep(5_000) }
-        #expect(process.succeeded)
+        while try process.isRunning && Date() < deadline { usleep(5_000) }
+        #expect(try process.succeeded)
         #expect(prepared.cleanup())
         #expect(!FileManager.default.fileExists(atPath: prepared.directory.path))
     }
