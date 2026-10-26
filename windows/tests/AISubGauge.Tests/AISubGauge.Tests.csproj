@@ -1,28 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
-    <UseWindowsForms>true</UseWindowsForms>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>disable</ImplicitUsings>
-    <IsPackable>false</IsPackable>
-    <IsTestProject>true</IsTestProject>
-  </PropertyGroup>
-  <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
-    <PackageReference Include="xunit" Version="2.9.2" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-      <PrivateAssets>all</PrivateAssets>
-    </PackageReference>
-    <ProjectReference Include="../../src/AISubGauge/AISubGauge.csproj" />
-    <ProjectReference Include="../FakeGrokCli/FakeGrokCli.csproj" ReferenceOutputAssembly="false" />
-  </ItemGroup>
-  <Target Name="PublishSubprocessFixtures" AfterTargets="Build">
-    <!-- Publish the entire runtime, not just the apphost and application assemblies.
-         The production renewal environment deliberately excludes DOTNET_ROOT. -->
-    <MSBuild Projects="../FakeGrokCli/FakeGrokCli.csproj" Targets="Publish"
-             Properties="Configuration=$(Configuration);PublishDir=$(TargetDir)FakeGrokCli/;PublishSingleFile=false" />
-    <MSBuild Projects="../../src/AISubGauge/AISubGauge.csproj" Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(TargetDir)AppHost/;PublishSingleFile=false" />
-  </Target>
+  <PropertyGroup><OutputType>Exe</OutputType><UseWindowsForms>true</UseWindowsForms></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../../src/AISubGauge2/AISubGauge2.csproj" /></ItemGroup>
 </Project>
