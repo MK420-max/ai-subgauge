@@ -4,7 +4,7 @@ Baseline: branch `macos26-support`, commit `3004a15`. No release or host app rep
 
 ## Evidence and root cause
 
-The supplied `/Users/mymac/sg-transfer/release/2.0.2/sample-2.0.2.txt` records macOS 27.0.1, app 2.0.2 (202). Lines 24–32 show 2,456 main-thread samples, 1,257 in `closure #1 in closure #1 in AIUsageMenuBarController.update()`, including 319 in `QuotaMenuImage.bitmapImage`. Lines 4,102 onward show delayed `_updateReplicants`; lines 9,315–9,317 show 389 worker samples in `MenuEngine.refresh`, including 181 in scanner AX reads. Sample counts measure time, not invocation counts.
+A supplied sample file records macOS 27.0.1, app 2.0.2 (202). Lines 24–32 show 2,456 main-thread samples, 1,257 in `closure #1 in closure #1 in AIUsageMenuBarController.update()`, including 319 in `QuotaMenuImage.bitmapImage`. Lines 4,102 onward show delayed `_updateReplicants`; lines 9,315–9,317 show 389 worker samples in `MenuEngine.refresh`, including 181 in scanner AX reads. Sample counts measure time, not invocation counts.
 
 The closure defined inside `update()` is the button's `effectiveAppearance` KVO callback. At **baseline** `mac/Sources/TidyBar/AIUsageMenuBar.swift:219–224`, every callback enqueues a main-actor task, clears `lastRenderKey`, then calls `update()`. Clearing the key forces a new bitmap and button image assignment even when the effective appearance name and quota inputs are identical. The sampled closure identifies this callback as the dominant update source. Repeated AppKit appearance notifications therefore defeat the cache and sustain image/replicant work. The exact internal AppKit operation emitting each KVO callback is not identified by the asynchronous sample.
 
