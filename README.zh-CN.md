@@ -11,7 +11,7 @@
 [![macOS](https://img.shields.io/badge/macOS-26%2B-000000?logo=apple&logoColor=white)](#macos)
 [![Windows](https://img.shields.io/badge/Windows-x64-0078D6?logo=windows&logoColor=white)](#windows)
 [![MIT 许可证](https://img.shields.io/badge/许可证-MIT-green.svg)](LICENSE)
-[![Mac 版本](https://img.shields.io/badge/Mac-2.0.4%20%28构建%20204%29-blue)](#macos)
+[![Mac 版本](https://img.shields.io/badge/Mac-2.0.3%20%28构建%20204%29-blue)](#macos)
 [![Windows 版本](https://img.shields.io/badge/Windows-2.0.0-blue)](#windows)
 [![GitHub 星标](https://img.shields.io/github/stars/MK420-max/ai-subgauge?style=social)](https://github.com/MK420-max/ai-subgauge/stargazers)
 
@@ -63,13 +63,13 @@
 | OpenAI API、Anthropic API、xAI API | API 密钥 | — |
 | DeepSeek API、OpenRouter API、MiniMax API | API 密钥 | — |
 
-API 可提供的数据取决于服务商和套餐，详见 [macOS 服务商说明](mac/AI_SUPPORT.md)。[旧版 Windows 1.x 文档](windows/README.md#简体中文) 另有 Gemini、GitHub Copilot、Kimi Code 和 GLM / z.ai 读取说明；本文介绍的 Windows 2.0 安装包聚焦 Codex、Claude、Grok Bot。
+API 可提供的数据取决于服务商和套餐，详见 [macOS 服务商说明](mac/AI_SUPPORT.md)和 [Windows 2.0 额度来源](windows/README.md#凭据与额度来源)。本文介绍的 Windows 2.0 安装包聚焦 Codex、Claude、Grok Bot。
 
 ## 安装
 
 ### macOS
 
-**Mac 2.0.4 · 构建 204 · Apple 芯片**
+**Mac 2.0.3 · 构建 204 · Apple 芯片**
 
 > 部署目标支持 **macOS 26.0 及以上**。应用**尚未在运行 macOS 26 的真实硬件上测试**，该系统上的菜单栏图标识别和收纳仍需实机验证。
 
@@ -105,7 +105,7 @@ Windows 2.0 提供两种安装方式：
 | 设置 | `%LOCALAPPDATA%\AISubGauge2\settings.json` |
 | 日志 | `%LOCALAPPDATA%\AISubGauge2\logs\app.log` |
 
-2.0 可与 1.x 同时安装。卸载可使用开始菜单快捷方式，或运行安装目录中的 `uninstall.ps1`；添加 `-KeepSettings` 可保留设置。WindowsQuotaTray 的迁移机制适用于[旧版 Windows 应用](windows/README.md#从-windowsquotatray-迁移)。
+2.0 可与 1.x 同时安装。卸载可使用开始菜单快捷方式，或运行安装目录中的 `uninstall.ps1`；添加 `-KeepSettings` 可保留设置。详见 [Windows 安装与并行使用说明](windows/README.md#与-1x-并行)。
 
 ## 开始使用
 
@@ -148,7 +148,7 @@ macOS 菜单栏显示服务商图标和剩余额度圆弧；百分比可选，�
 - **限制进程检测范围。** 显示状态检测仅读取进程名，不读取命令行、可执行文件路径或进程内存。
 - **受控续期。** 读取登录信息时不改写凭据；Grok 官方 CLI 续期时可更新自身登录文件，随后应用会收紧文件权限。不安全的凭据文件会被拒绝，官方 CLI 执行受平台签名检查约束；Windows 的 npm 手动允许选项见上文。
 
-macOS 可选天气功能会向 Open-Meteo 发送所配置城市的坐标。详见 [macOS 隐私说明](mac/PRIVACY.md)、[macOS 安全说明](mac/docs/SECURITY.md)和[旧版 Windows 安全说明](windows/docs/SECURITY.md)。
+macOS 可选天气功能会向 Open-Meteo 发送所配置城市的坐标。详见 [macOS 隐私说明](mac/PRIVACY.md)、[macOS 安全说明](mac/docs/SECURITY.md)和 [Windows 凭据与安全说明](windows/README.md#凭据与额度来源)。
 
 ## 从源码构建
 
@@ -170,23 +170,14 @@ zsh package-dmg.sh
 
 ### 构建 Windows 版
 
-使用 Windows、PowerShell 及包含 Windows Desktop 支持的 .NET 8 SDK。从仓库根目录构建当前解决方案：
+使用 Windows、PowerShell 及包含 Windows Desktop 支持的 .NET 8 SDK。`windows/` 目录包含 Windows 2.0 源码，包括 `build.ps1`、`install.ps1`、`uninstall.ps1`、`src/` 和 `tests/`。从仓库根目录执行：
 
 ```powershell
 cd windows
-dotnet restore .\AISubGauge.sln --locked-mode
-dotnet build .\AISubGauge.sln -c Release --no-restore
-dotnet test .\tests\AISubGauge.Tests\AISubGauge.Tests.csproj -c Release --no-build
-dotnet publish .\src\AISubGauge\AISubGauge.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o .\publish\win-x64
-```
-
-当前仓库的 `windows/` 仍为旧版解决方案，产物名为 `AISubGauge.exe`，详见其[构建说明](windows/README.md#构建测试与安装)。安装章节所述 Windows 2.0 的打包源码使用以下命令，产物位于 `artifacts\`：
-
-```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-请在 Windows 2.0 源码目录运行该命令。当前仓库未包含其 `build.ps1`，上方旧版解决方案的命令不会生成 2.0 安装包。
+脚本会构建、测试并打包 Windows 2.0。产物位于 `windows/` 内的 `artifacts\`，包括自包含程序 `publish\AISubGauge2.exe`、便携 ZIP，以及 IExpress 可用时生成的安装包。详见 [Windows 构建与测试说明](windows/README.md#构建与测试)。
 
 ## 项目结构
 
@@ -217,7 +208,7 @@ docs/      截图与技术说明
 
 [MIT](LICENSE) · 版权所有 © 2026 Mike Kou。
 
-服务商名称和图标归各自所有者所有，详见 [macOS 第三方声明](mac/THIRD_PARTY_NOTICES.md)和 [Windows 说明](windows/README.md#简体中文)。
+服务商名称和图标归各自所有者所有，详见 [macOS 第三方声明](mac/THIRD_PARTY_NOTICES.md)和 [Windows 说明](windows/README.md#许可证)。
 
 [![星标趋势图](https://api.star-history.com/svg?repos=MK420-max/ai-subgauge&type=Date)](https://star-history.com/#MK420-max/ai-subgauge&Date)
 
