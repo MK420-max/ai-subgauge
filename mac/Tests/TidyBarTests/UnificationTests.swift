@@ -30,7 +30,7 @@ final class UnificationTests {
         let info = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
         #expect(AppIdentifiers.version == "2.0.3")
         #expect(info["CFBundleShortVersionString"] as? String == AppIdentifiers.version)
-        #expect(info["CFBundleVersion"] as? String == "203")
+        #expect(info["CFBundleVersion"] as? String == "204")
     }
 
     private func directory() throws -> URL {

@@ -171,7 +171,7 @@ enum CodexUsageSource {
         try? input.fileHandleForReading.close(); try? output.fileHandleForWriting.close()
         defer {
             try? input.fileHandleForWriting.close()
-            process.terminateAndWait()
+            process.abandonBestEffort()
             try? output.fileHandleForReading.close()
         }
         onLaunch?(process.processIdentifier)
