@@ -27,7 +27,7 @@ OpenAI and Codex belong to OpenAI; Anthropic and Claude to Anthropic PBC; Gemini
 | Platform | Version | Installation location |
 | --- | --- | --- |
 | Windows | 1.2.0 | `%LOCALAPPDATA%\Programs\AISubGauge\AISubGauge.exe` |
-| Mac | 2.0.0 | `/Applications/AI SubGauge.app` |
+| Mac | 2.0.3 | `/Applications/AI SubGauge.app` |
 
 [Shared strings](strings.md) records the wording and formatting contract for both platforms. The Mac implementation now uses the shared language catalogs and process map described below. Windows can adopt the same JSON formats in its next implementation pass.
 

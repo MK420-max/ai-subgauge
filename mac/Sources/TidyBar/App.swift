@@ -72,12 +72,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var subscriptions = Set<AnyCancellable>()
     private var spacerItems: [NSStatusItem] = []
     private var groupItems: [NSStatusItem] = []
+    private var statusFramesRegistration: UUID?
     private var observers: [NSObjectProtocol] = []
     private var eventMonitors: [Any] = []
     private var timer: Timer?
     private var lastInteraction = Date()
-    private var hoverStarted: Date?
-    private var wasHovering = false
+    private var hoverReveal = HoverReveal()
     private var menuDepth = 0
     private var extrasSignature = ""
     private var stopping = false
@@ -116,10 +116,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lastOrder = store.config.order
         installMenu()
         installStatusItem()
-        PopupManager.shared.statusFrames = { [weak self] in
+        statusFramesRegistration = PopupManager.shared.registerStatusFrames { [weak self] in
             guard let self else { return [] }
-            return ([self.statusItem] + self.spacerItems + self.groupItems).compactMap { PopupManager.screenFrame($0?.button) }
-                + [self.usageMenuBar?.statusButtonFrame].compactMap { $0 }
+            return ([self.statusItem] + self.spacerItems + self.groupItems).flatMap { PopupManager.statusButtonFrames($0?.button) }
         }
         engine.ownStatusFrameProvider = { [weak self] in
             guard let button = self?.statusItem?.button, let window = button.window,
@@ -153,7 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let previous = notification.userInfo?["previousLayout"] as? LayoutPreset else { return }
             self.applyPreset(previous: previous, id: notification.userInfo?["presetID"] as? UUID)
         }.store(in: &subscriptions)
-        engine.$isExpanded.sink { [weak self] expanded in
+        engine.$isExpanded.removeDuplicates().sink { [weak self] expanded in
             self?.statusItem?.button?.image = NSImage(systemSymbolName: expanded ? "tray.full.fill" : "tray.2", accessibilityDescription: L10n.text("app.name"))
         }.store(in: &subscriptions)
         automation.start()
@@ -173,7 +172,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         stopping = true
         PopupManager.shared.dismiss()
-        PopupManager.shared.statusFrames = { [] }
+        if let statusFramesRegistration { PopupManager.shared.unregisterStatusFrames(statusFramesRegistration) }
+        statusFramesRegistration = nil
         timer?.invalidate()
         eventMonitors.forEach { NSEvent.removeMonitor($0) }
         observers.forEach { NotificationCenter.default.removeObserver($0) }
@@ -255,6 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func statusClicked(_ button: NSButton) {
+        PopupManager.shared.recordStatusItemAction()
         let event = StatusItemApplication.actionEvent
         guard PopupManager.shared.consume(event) else { return }
         lastInteraction = Date()
@@ -367,6 +368,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.button?.setAccessibilityIdentifier("com.mike.aisubgauge.spacer.\(index)")
             item.button?.title = "│"; item.button?.contentTintColor = .tertiaryLabelColor
             item.button?.toolTip = L10n.text("menu.spacer.hold.to.drag.its.position")
+            item.button?.target = self; item.button?.action = #selector(spacerClicked(_:))
+            item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
             spacerItems.append(item)
         }
         for name in names {
@@ -380,8 +383,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
     @objc private func groupClicked(_ sender: NSStatusBarButton) {
+        PopupManager.shared.recordStatusItemAction()
         guard PopupManager.shared.consume(StatusItemApplication.actionEvent) else { return }
         showSearch(all: true, group: sender.title, anchor: sender)
+    }
+
+    @objc private func spacerClicked(_ sender: NSStatusBarButton) {
+        PopupManager.shared.recordStatusItemAction()
     }
 
     private func installEvents() {
@@ -393,13 +401,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             })
         }
         let mask: NSEvent.EventTypeMask = [.scrollWheel, .leftMouseUp, .rightMouseUp, .keyDown]
-        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] event in self?.handleEvent(event) }) { eventMonitors.append(monitor) }
-        if let monitor = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in self?.handleEvent(event); return event }) { eventMonitors.append(monitor) }
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] event in self?.handleEvent(event, source: .global) }) { eventMonitors.append(monitor) }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in self?.handleEvent(event, source: .local); return event }) { eventMonitors.append(monitor) }
         timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in Task { @MainActor in self?.tick() } }
         timer?.tolerance = 0.08
     }
 
-    private func handleEvent(_ event: NSEvent) {
+    private func handleEvent(_ event: NSEvent, source: PopupManager.EventSource) {
         if event.type != .scrollWheel { lastInteraction = Date() }
         let point = PopupManager.screenPoint(event)
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }),
@@ -410,8 +418,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if event.type == .leftMouseUp, store.config.revealOnEmptyClick {
             let primaryTop = NSScreen.screens.first?.frame.maxY ?? screen.frame.maxY
             let cg = CGPoint(x: point.x, y: primaryTop - point.y)
-            let onItem = engine.items.contains { $0.frame.insetBy(dx: -3, dy: -3).contains(cg) }
-            PopupManager.shared.handleEmptyClick(event, at: point, onScannedItem: onItem) { self.toggle() }
+            // Our buttons use live registered frames rather than the scanner's last snapshot.
+            let ownBundle = Bundle.main.bundleIdentifier ?? AppIdentifiers.bundleID
+            let onItem = engine.items.contains { $0.bundleID != ownBundle && $0.frame.insetBy(dx: -3, dy: -3).contains(cg) }
+            PopupManager.shared.handleEmptyClick(event, at: point, onScannedItem: onItem, source: source) { [weak self] in
+                guard let self, !self.stopping, self.store.config.revealOnEmptyClick else { return }
+                self.toggle()
+            }
         }
     }
 
@@ -425,14 +438,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let overPanel = searchPanel.map { $0.isVisible && $0.frame.contains(point) } ?? false
         if onBar || overPanel { lastInteraction = Date() }
         if store.config.revealOnHover && onBar {
-            if hoverStarted == nil { hoverStarted = Date() }
-            if !wasHovering, Date().timeIntervalSince(hoverStarted!) > 0.55 {
-                wasHovering = true
-                if searchPanel?.isVisible != true {
-                    if store.config.useFloatingBar { showSearch(all: false, toggle: false) } else if !engine.isExpanded { engine.toggle() }
-                }
+            let manager = PopupManager.shared
+            if hoverReveal.update(point: point, statusFrames: manager.statusFrames(), popupKind: manager.kind,
+                                  lastStatusActionTime: manager.lastStatusActionTime,
+                                  now: ProcessInfo.processInfo.systemUptime, menuDepth: menuDepth) {
+                if store.config.useFloatingBar { showSearch(all: false, toggle: false) } else if !engine.isExpanded { engine.toggle() }
             }
-        } else { hoverStarted = nil; wasHovering = false }
+        } else { hoverReveal = HoverReveal() }
         let delay = store.config.autoHideDelay
         if delay > 0, Date().timeIntervalSince(lastInteraction) > delay, !engine.isBusy, menuDepth == 0 {
             closeCollectionPanel()

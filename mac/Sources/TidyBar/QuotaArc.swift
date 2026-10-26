@@ -207,14 +207,45 @@ enum QuotaMenuImage {
         }
     }
 
+    static func displayedPercent(_ snapshot: AIUsageSnapshot) -> Double? {
+        snapshot.isConnected && snapshot.error == nil
+            ? snapshot.windows.compactMap { AIUsageMenuBarController.remaining($0.remainingPercent) }.first : nil
+    }
+
+    /// Status-bar replicant snapshots must only copy pixels, never re-run the drawing handler.
+    /// Keep separate native 1x/2x rasters so small glyphs stay sharp on either display.
+    static func bitmapImage(snapshots: [AIUsageSnapshot], showPercentage: Bool, colorsByQuota: Bool,
+                            placement: AIUsageMenuBarPreference.PercentagePlacement, appearance: NSAppearance) -> NSImage {
+        let source = image(snapshots: snapshots, showPercentage: showPercentage, colorsByQuota: colorsByQuota, placement: placement)
+        let result = NSImage(size: source.size)
+        guard source.size.width > 0, source.size.height > 0 else { return result }
+        for scale in [1, 2] {
+            guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+                pixelsWide: max(1, Int(ceil(source.size.width * CGFloat(scale)))),
+                pixelsHigh: max(1, Int(ceil(source.size.height * CGFloat(scale)))),
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+                  let context = NSGraphicsContext(bitmapImageRep: bitmap) else { continue }
+            bitmap.size = source.size
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = context
+            // bitmap.size sets representation DPI; its drawing context still uses pixels.
+            context.cgContext.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
+            appearance.performAsCurrentDrawingAppearance {
+                source.draw(in: NSRect(origin: .zero, size: source.size))
+            }
+            NSGraphicsContext.restoreGraphicsState()
+            result.addRepresentation(bitmap)
+        }
+        result.isTemplate = false
+        return result
+    }
+
     static func image(snapshots: [AIUsageSnapshot], showPercentage: Bool,
                       colorsByQuota: Bool = SubscriptionPreferences().colorsByQuota,
                       placement: AIUsageMenuBarPreference.PercentagePlacement = .arcTop) -> NSImage {
         let ordered = snapshots
-        let percentages = ordered.map { snapshot in
-            snapshot.isConnected && snapshot.error == nil
-                ? snapshot.windows.compactMap { AIUsageMenuBarController.remaining($0.remainingPercent) }.first : nil
-        }
+        let percentages = ordered.map(displayedPercent)
         let widths = percentages.map { segmentWidth(percent: $0, showPercentage: showPercentage, placement: placement) }
         let width = widths.reduce(0, +) + CGFloat(max(0, ordered.count - 1)) * MenuArcMetrics.segmentGap
         let image = NSImage(size: NSSize(width: width, height: MenuArcMetrics.segmentSize), flipped: true) { _ in

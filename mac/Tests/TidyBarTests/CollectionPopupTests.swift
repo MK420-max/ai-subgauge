@@ -34,11 +34,10 @@ extension TidyBarTests {
         let quotaButton = NSButton()
         quotaButton.target = quota
         quotaButton.action = #selector(AIUsageMenuBarController.statusItemClicked(_:))
-        let oldFrames = manager.statusFrames
-        manager.statusFrames = { [PopupManager.screenFrame(drawerButton)].compactMap { $0 } }
+        let registration = manager.registerStatusButton(drawerButton)
         defer {
             manager.dismiss()
-            manager.statusFrames = oldFrames
+            manager.unregisterStatusFrames(registration)
             defaults.removePersistentDomain(forName: defaultsName)
         }
         let first: PopupManager.Kind = quotaFirst ? .quota : .drawer
@@ -134,7 +133,7 @@ extension TidyBarTests {
         let second = NSButton(frame: NSRect(x: 60, y: 0, width: 40, height: 24))
         window.contentView?.addSubview(first)
         window.contentView?.addSubview(second)
-        manager.statusFrames = { [first, second].compactMap(PopupManager.screenFrame) }
+        manager.registerStatusFrames { [first, second].compactMap(PopupManager.screenFrame) }
         manager.present(.drawer, anchor: first) { panel in panel.setFrameOrigin(NSPoint(x: -700, y: -700)) }
         for button in [first, second] {
             // The sandbox may provide NSWindows with windowNumber == 0. Such a
@@ -263,9 +262,10 @@ extension TidyBarTests {
 
     @MainActor @Test func blankAndStatusPathsConsumeEachMouseEventOnlyOnce() throws {
         _ = NSApplication.shared
-        let manager = PopupManager()
+        let scheduler = EmptyClickTestScheduler()
+        let manager = scheduler.makeManager()
         let statusFrame = NSRect(x: 100, y: 100, width: 40, height: 24)
-        manager.statusFrames = { [statusFrame] }
+        manager.registerStatusFrames { [statusFrame] }
         var toggles = 0
         func event(_ number: Int) throws -> NSEvent {
             try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: .zero, modifierFlags: [],
@@ -281,7 +281,9 @@ extension TidyBarTests {
         let blank = try event(2)
         #expect(manager.handleEmptyClick(blank, at: NSPoint(x: 200, y: 110), onScannedItem: false) { toggles += 1 })
         #expect(!manager.handleEmptyClick(blank, at: NSPoint(x: 200, y: 110), onScannedItem: false) { toggles += 1 })
-        #expect(!manager.consume(blank)) // A later status target/action for this event is suppressed too.
+        #expect(toggles == 1) // Pending blank clicks leave button actions available.
+        scheduler.advance()
+        #expect(!manager.consume(blank)) // Only the confirmed blank click has now consumed the event.
         #expect(toggles == 2)
         let scanned = try event(3)
         #expect(!manager.handleEmptyClick(scanned, at: NSPoint(x: 220, y: 110), onScannedItem: true) { toggles += 1 })

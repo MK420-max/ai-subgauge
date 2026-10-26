@@ -2,7 +2,7 @@
 
 # AI SubGauge
 
-AI SubGauge 2.0.0 for Mac shows the remaining allowance of popular AI subscriptions, with menu bar icon organization built in. It is written in Swift, SwiftUI and AppKit; the interface supports English and Simplified Chinese.
+AI SubGauge 2.0.3 for Mac shows the remaining allowance of popular AI subscriptions, with menu bar icon organization built in. It is written in Swift, SwiftUI and AppKit; the interface supports English and Simplified Chinese.
 
 ## Features
 
@@ -50,7 +50,9 @@ The bundle's `CFBundleIconFile` is `AISubGauge-light.icns`. Both icon variants a
 
 ## Requirements and installation
 
-macOS 27.0 or later. The package uses Swift tools 5.9, Swift 5 language mode and Swift Testing. Packaging is intended for Apple Silicon.
+The app can be installed on macOS 26, but it has not yet been tested on a physical Mac running macOS 26; menu bar icon detection may differ.
+
+macOS 26.0 or later. The package uses Swift tools 5.9, Swift 5 language mode and Swift Testing. Packaging is intended for Apple Silicon.
 
 Build the app, then move it to `/Applications/AI SubGauge.app` yourself. Builds use ad hoc signing; they are not Developer ID signed or notarized, so Gatekeeper may require approval. Accessibility permission is needed for icon organization. Menu bar position access, Calendar, Music automation and Wi-Fi location access are requested only for the relevant optional features. The menu bar bridge uses private macOS APIs and may need updates after system changes.
 
@@ -81,20 +83,20 @@ Usage checks do not send model prompts. Weather requests send the configured cit
 Run every test from this directory:
 
 ```sh
-swift build --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
-swift test --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+swift build --sdk "$(xcrun --show-sdk-path)" --triple arm64-apple-macosx26.0
+swift test --sdk "$(xcrun --show-sdk-path)" --triple arm64-apple-macosx26.0
 # Alternatively, test.sh forwards all arguments:
-zsh test.sh --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+zsh test.sh --sdk "$(xcrun --show-sdk-path)" --triple arm64-apple-macosx26.0
 ```
 
-Selecting the 26.5 SDK does not lower the minimum OS requirement. There are no external Swift package dependencies. The Objective-C bridge retains ARC for callback and object lifetimes.
+The SDK is selected from the active developer tools; the target triple sets the minimum OS to macOS 26.0. There are no external Swift package dependencies. The Objective-C bridge retains ARC for callback and object lifetimes.
 
 ```sh
 zsh build.sh
 zsh package-dmg.sh
 ```
 
-Outputs: `dist/AI SubGauge.app`, `dist/AI SubGauge.zip`, and `dist/AI SubGauge-2.0.0-arm64.dmg`. Intermediate files remain in `.build/`. Packaging does not install or open the app. Additional Swift build options can be passed to `build.sh`; an existing DMG is never overwritten.
+Outputs: `dist/AI SubGauge.app`, `dist/AI SubGauge.zip`, and `dist/AI SubGauge-2.0.3-arm64.dmg`. Intermediate files remain in `.build/`. Packaging does not install or open the app. Additional Swift build options can be passed to `build.sh`; an existing DMG is never overwritten.
 
 In a restricted development sandbox, keep caches and temporary files in this checkout, and use a fresh module cache if this checkout was copied from another path:
 
@@ -103,8 +105,8 @@ mkdir -p .build/unify-module-cache .build/unify-tmp
 export CLANG_MODULE_CACHE_PATH="$PWD/.build/unify-module-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$PWD/.build/unify-module-cache"
 export TMPDIR="$PWD/.build/unify-tmp"
-swift build --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk --disable-sandbox --disable-keychain --disable-netrc --cache-path .build/unify-cache --config-path .build/config --security-path .build/security
-swift test --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk --disable-sandbox --disable-keychain --disable-netrc --cache-path .build/unify-cache --config-path .build/config --security-path .build/security
+swift build --sdk "$(xcrun --show-sdk-path)" --triple arm64-apple-macosx26.0 --disable-sandbox --disable-keychain --disable-netrc --cache-path .build/unify-cache --config-path .build/config --security-path .build/security
+swift test --sdk "$(xcrun --show-sdk-path)" --triple arm64-apple-macosx26.0 --disable-sandbox --disable-keychain --disable-netrc --cache-path .build/unify-cache --config-path .build/config --security-path .build/security
 ```
 
 ## Offline development preview
@@ -133,7 +135,7 @@ If AI SubGauge is useful to you, a ⭐ on GitHub would be much appreciated.
 
 # AI SubGauge（简体中文）
 
-AI SubGauge 2.0.0 Mac 版用于查看常用 AI 订阅的剩余额度，并提供菜单栏图标收纳功能。应用使用 Swift、SwiftUI 和 AppKit 开发，界面支持英文和简体中文。
+AI SubGauge 2.0.3 Mac 版用于查看常用 AI 订阅的剩余额度，并提供菜单栏图标收纳功能。应用使用 Swift、SwiftUI 和 AppKit 开发，界面支持英文和简体中文。
 
 ## 功能
 
@@ -181,7 +183,9 @@ python3 ../shared/i18n/check-keys.py
 
 ## 系统要求与安装
 
-需要 macOS 27.0 或更新版本。项目使用 Swift tools 5.9、Swift 5 语言模式和 Swift Testing；打包面向 Apple 芯片。
+macOS 26 可以安装，但尚未在 macOS 26 真机上测试，菜单栏图标的识别可能有差异。
+
+需要 macOS 26.0 或更新版本。项目使用 Swift tools 5.9、Swift 5 语言模式和 Swift Testing；打包面向 Apple 芯片。
 
 构建后由用户自行移入 `/Applications/AI SubGauge.app`。构建使用临时签名，没有 Developer ID 签名或公证，Gatekeeper 可能要求确认。图标收纳需要辅助功能权限；菜单栏位置文件、日历、音乐自动化、Wi-Fi 定位权限仅在使用对应可选功能时请求。菜单栏桥接使用 macOS 私有 API，系统更新后可能需要适配。
 
@@ -212,20 +216,20 @@ Grok 保留官方 CLI 登录和同账户 ACP 令牌续期流程。需要下载 C
 在本目录执行全部测试：
 
 ```sh
-swift build --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
-swift test --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+swift build --sdk "$(xcrun --show-sdk-path)" --triple arm64-apple-macosx26.0
+swift test --sdk "$(xcrun --show-sdk-path)" --triple arm64-apple-macosx26.0
 # test.sh 也可转发参数：
-zsh test.sh --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+zsh test.sh --sdk "$(xcrun --show-sdk-path)" --triple arm64-apple-macosx26.0
 ```
 
-选择 26.5 SDK 不会降低最低系统要求。项目没有外部 Swift package 依赖；Objective-C 桥接保持 ARC 以管理对象及回调生命周期。
+SDK 由当前开发工具选择；目标 triple 将最低系统版本设为 macOS 26.0。项目没有外部 Swift package 依赖；Objective-C 桥接保持 ARC 以管理对象及回调生命周期。
 
 ```sh
 zsh build.sh
 zsh package-dmg.sh
 ```
 
-产物为 `dist/AI SubGauge.app`、`dist/AI SubGauge.zip` 和 `dist/AI SubGauge-2.0.0-arm64.dmg`，中间文件留在 `.build/`。打包不会安装或打开应用。`build.sh` 可接收额外 Swift 构建参数；已有 DMG 不会被覆盖。
+产物为 `dist/AI SubGauge.app`、`dist/AI SubGauge.zip` 和 `dist/AI SubGauge-2.0.3-arm64.dmg`，中间文件留在 `.build/`。打包不会安装或打开应用。`build.sh` 可接收额外 Swift 构建参数；已有 DMG 不会被覆盖。
 
 在受限沙箱中，将缓存及临时文件保留在本项目；如果项目从其他路径复制而来，使用新的模块缓存：
 
@@ -234,8 +238,8 @@ mkdir -p .build/unify-module-cache .build/unify-tmp
 export CLANG_MODULE_CACHE_PATH="$PWD/.build/unify-module-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$PWD/.build/unify-module-cache"
 export TMPDIR="$PWD/.build/unify-tmp"
-swift build --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk --disable-sandbox --disable-keychain --disable-netrc --cache-path .build/unify-cache --config-path .build/config --security-path .build/security
-swift test --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk --disable-sandbox --disable-keychain --disable-netrc --cache-path .build/unify-cache --config-path .build/config --security-path .build/security
+swift build --sdk "$(xcrun --show-sdk-path)" --triple arm64-apple-macosx26.0 --disable-sandbox --disable-keychain --disable-netrc --cache-path .build/unify-cache --config-path .build/config --security-path .build/security
+swift test --sdk "$(xcrun --show-sdk-path)" --triple arm64-apple-macosx26.0 --disable-sandbox --disable-keychain --disable-netrc --cache-path .build/unify-cache --config-path .build/config --security-path .build/security
 ```
 
 ## 离线开发预览

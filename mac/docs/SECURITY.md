@@ -15,3 +15,9 @@ posix_spawn 执行的是上述 0500 目录中的已验证副本，并通过 POSI
 凭据读取在同一 fd 上检查普通文件、当前所有者、POSIX 权限和扩展 ACL。任何非 owner 的 allow ACE 授予数据读取、写入或权限/所有者修改能力都会拒绝（即使另有 deny ACE）。没有扩展 ACL 时继续检查 POSIX 权限。文件按块读取，最多读取上限加 1 字节；设置文件上限 5 MB，凭据及共享资源 1 MiB，Grok Bot 标记/缓存 256 KB。磁盘元数据检查不能替代读取过程中限额。
 
 设置导出会清空天气城市、坐标及 Wi-Fi 条件，关闭对应天气组件和 Wi-Fi 自动化规则；本机保存仍保留原设置。诊断在预览和导出前递归脱敏 SSID/坐标键及文本中的相应字段。
+
+Grok 续期撤销后，`GrokRenewalEpoch.abandon` 按同一截止时间限时等待清理锁与 active 操作排空。超时保留撤销状态并拒绝启动新 writer；后续 refresh 可重新发起清理。旧尝试的迟到结果受 attempt ID 检查，权限修复在 epoch 的清理锁内串行执行，成功后标记完成，避免重试再次修改新任务的凭据权限。取消调用方继续收到 CancellationError；清理真因保留在 pending.cleanupError 并传给尚在等待的非取消调用方。正常取消不记录续期失败事件。
+
+`CLIProcess.isRunning` 只用 WNOHANG | WNOWAIT 观察 leader，不发送信号、不回收 PID。调用方须显式调用 `stopRecordedChild()` 完成整组清理；`succeeded` 在观察到 leader 已退出时也先完成清理、回收，再报告最新状态，观察失败会抛出。`stopRecordedChild()` 持有独占 reaper 状态，先 SIGTERM，随后每轮重发整组 SIGKILL 并检查 leader 和组成员，连续三轮无存活成员后才以 waitpid 回收 leader、返回成功；任一无法确认的路径抛错。Grok 的 finish/abandon 仅在该阻塞确认成功后恢复 0600，再放行 queued 任务。保留未回收 leader 可防止本应用持有的 PID 被复用；进程列表快照的 fork 竞态通过重复发信号与间隔确认缓解。主动脱离原进程组的进程不受该组清理协议覆盖。
+
+所有 CLI 观察、锁等待、清理与回收循环共用单次操作的截止时间，观察器返回后无论成功或错误均复核期限。waitID 注入必须遵守原生 WNOHANG 的非阻塞契约；任意不返回的替代函数无法被同步调用方抢占。对象释放将 sole reaper 状态移交后台队列，尽力限时清理，观察器失败时以原生 waitid 再次确认所有权并强制清理/回收，不阻塞释放对象的主线程。

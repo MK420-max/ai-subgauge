@@ -9,7 +9,7 @@ let testingSettings: [SwiftSetting] = FileManager.default.fileExists(atPath: tes
 
 let package = Package(
     name: "AISubGauge",
-    platforms: [.macOS("27.0")],
+    platforms: [.macOS("26.0")],
     products: [.executable(name: "AISubGauge", targets: ["TidyBar"])],
     targets: [
         .systemLibrary(name: "SystemMembership"),
