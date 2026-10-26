@@ -13,7 +13,8 @@ public sealed class Texts(string language)
     public string PlanName(Plan plan) => this["Plan" + plan];
     public string Error(Fault fault) => this["Fault" + fault];
     public string Error(Vendor vendor, Fault fault) => Presentation.SignInExpired(fault)
-        ? Format("SignInExpired", vendor.ToString()) : Error(fault);
+        ? Format("SignInExpired", vendor.ToString()) : vendor == Vendor.Grok && fault == Fault.VerifierUnresponsive
+            ? this["GrokVerifierRetrying"] : Error(fault);
     public string Reset(DateTimeOffset? reset, DateTimeOffset now)
     {
         if (reset is null) return this["ResetUnknown"];
@@ -23,7 +24,18 @@ public sealed class Texts(string language)
         return Math.Ceiling(remaining.TotalMinutes) <= 1 ? this["ResetMinute"] : Format("ResetMinutes", Math.Ceiling(remaining.TotalMinutes));
     }
     public string Updated(DateTimeOffset? value) => value is null ? this["NotUpdated"] : Format("Updated", value.Value.LocalDateTime.ToString("t", Culture));
-    public string Status(Snapshot snapshot) => snapshot.Fault != Fault.None ? Error(snapshot.Vendor, snapshot.Fault) :
+    public string FailureReason(Snapshot snapshot) => snapshot.GrokState == GrokState.VerificationFailed ? this["GrokVerificationShort"] :
+        Presentation.CanSignInAgain(snapshot) ? this["GrokSignInExpired"] : Error(snapshot.Vendor, snapshot.Fault);
+    public string StaleValue(Snapshot snapshot) => Format("StaleValue",
+        Presentation.Percent(snapshot.FiveHour.Percent ?? snapshot.Weekly.Percent), snapshot.Updated.LocalDateTime.ToString("HH:mm", Culture));
+    public string Status(Snapshot snapshot) => snapshot.Fault != Fault.None
+        ? FailureReason(snapshot) + (snapshot.Stale ? " · " + StaleValue(snapshot) : "") :
         Format("Connected", Presentation.Percent(snapshot.FiveHour.Percent ?? snapshot.Weekly.Percent));
+    public string TrayStatus(Snapshot snapshot)
+    {
+        string value = (snapshot.Vendor == Vendor.Grok ? "Grok" : Name(snapshot.Vendor)) + " · " + Status(snapshot);
+        // Modern NOTIFYICONDATA supports 127 characters plus the terminating NUL.
+        return value.Length <= 127 ? value : value[..127];
+    }
 }
 

@@ -72,11 +72,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\InstallFiles.Tes
 - **Codex**：沿用 1.x 的官方 CLI `app-server` JSON-RPC，调用 `account/read` 和 `account/rateLimits/read`。只接受 ChatGPT 订阅登录，API key 账户不算订阅。自动查找仅限 `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe` 和 `%APPDATA%\npm\node_modules\@openai` 下已知的 Windows 原生 CLI 包路径；不搜索 PATH，不执行 `.cmd`。这些目录均可由当前用户写入，目录位置本身不能证明文件可信。LocalAppData 下的 codex.exe 必须通过 Windows WinVerifyTrust 及下述 OpenAI 发布者和固定证书链校验。npm 路径同样默认要求签名；只有在通用设置开启默认关闭的 “Allow unsigned Codex CLI (npm)” / “允许未签名的 Codex CLI（npm）” 后才接受该位置的未签名文件，面板及订阅设置的 Codex 行显示 “Unsigned” / “未签名” 标识。开关不放宽无效签名、错误发布者、错误证书链或自定义路径的要求。`CODEX_EXE` 可指定其他本机绝对 `.exe` 路径，但必须通过相同的 OpenAI 发布者与证书链校验；使用后设置页显示自定义路径提示。`CODEX_HOME` 交给官方 CLI。当前不自动枚举 MSIX 安装，可用符合签名要求的显式路径。
 - **Claude**：使用 `CLAUDE_CODE_OAUTH_TOKEN` 或 `%USERPROFILE%\.claude\.credentials.json` 的 OAuth 登录，读取官方 OAuth usage。套餐取本地订阅类型，不根据余额猜套餐。
 - **Grok Bot**：优先读取官方 Grok CLI 登录元数据；可使用 `GROK_AUTH_PATH` 或 `GROK_HOME`，默认 `%USERPROFILE%\.grok\auth.json`。官方账单接口返回每周额度。没有官方 CLI 凭据时，可只读 Grok Bot 的当前账户用量缓存；缓存过期时明确显示过期，不把缓存当成当前数值。
-- **Grok 自动续期**：遇到 401 或已过 `expires_at` 时，启动本机已有官方 CLI 的 `agent stdio`，通过 `_x.ai/auth/getBearerToken` 续期，并重新读取同一账户的有效凭据。仅接受 `%USERPROFILE%\.grok\bin\grok.exe`；`GROK_EXE` 也必须落在该已知位置，使用时显示自定义路径提示。签名可选，存在无效签名时拒绝。只有官方 CLI 更新其凭据文件；应用不复制或打印凭据。每轮最多续期一次，401 后成功续期最多重试一次。官方 CLI 缺失或续期失败时提示重新登录。临时工作目录属于 AISubGauge2，并在结束后清理；清理失败只记录固定的 `RefreshCleanupFailed` 诊断状态。
+- **Grok 自动续期**：遇到 401 或已过 `expires_at` 时，启动本机已有官方 CLI 的 `agent stdio`，通过 `_x.ai/auth/getBearerToken` 续期，并重新读取同一账户的有效凭据。仅接受 `%USERPROFILE%\.grok\bin\grok.exe`；`GROK_EXE` 也必须落在该已知位置，使用时显示自定义路径提示。必须通过有效签名、精确的 X.AI LLC 组织名及固定 SSL.com 中间证书和根证书校验。只有官方 CLI 更新其凭据文件；应用不复制或打印凭据。每轮最多续期一次，401 后成功续期最多重试一次。官方 CLI 缺失或续期失败时提示重新登录。临时工作目录属于 AISubGauge2，并在结束后清理；清理失败只记录固定的 `RefreshCleanupFailed` 诊断状态。
 
 Codex 签名校验直接从成功的 WinVerifyTrust 状态读取签名者叶证书及其链（WTHelperProvDataFromStateData / WTHelperGetProvSignerFromChain），复制后在 finally 中关闭状态；不重新从文件读取证书，也不另建证书链。解析 X500DistinguishedName 的真实 O= RDN，要求组织名按 ordinal 精确等于 `OpenAI OpCo, LLC`，拒绝子串、仅 CN 匹配及歧义 RDN。链末端必须为 Microsoft Identity Verification Root Certificate Authority 2020（SHA-1 thumbprint `F40042E2E5F7E8EF8189FED15519AECE42C3BFA2`），且中间证书包含 Microsoft ID Verified Code Signing PCA 2021（`8E750F459DAF9A79D6370DB747AD2226866AD818`）。叶证书有效期约三天，会轮换，因此不固定叶证书指纹；颁发链更换时需审查并更新这些常量。
 
-整个原生校验在 Task.Run 工作线程中运行，默认每个文件最多等待 5 秒，超时或任何错误均返回固定的 Invalid 状态并拒绝启动。设置 `WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT | WTD_CACHE_ONLY_URL_RETRIEVAL`（`0x1080`），仅使用缓存检查撤销状态；缓存不足也会拒绝。CLI 查找和等待不会阻塞 UI 线程。超时不能安全中断原生调用，后台调用返回后自行关闭信任状态，迟到的成功结果不会用于启动。进程级 SemaphoreSlim(1) 在原生调用真正返回前一直占用；忙时立即返回 Invalid / VerifierBusy，不创建新校验工作线程。
+整个原生校验在 Task.Run 工作线程中运行，默认每个文件最多等待 5 秒，超时或任何错误均返回固定的 Invalid 状态并拒绝启动。设置 `WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT | WTD_CACHE_ONLY_URL_RETRIEVAL`（`0x1080`），仅使用缓存检查撤销状态；缓存不足也会拒绝。CLI 查找和等待不会阻塞 UI 线程。超时不能安全中断原生调用，后台调用返回后自行关闭信任状态，迟到的成功结果不会用于启动。进程级 SemaphoreSlim(1) 在原生调用真正返回前一直占用；正常并发调用最多等待 6 秒取得校验槽，然后原生验证最多等待 5 秒；只有超过槽等待上限才返回 Invalid / VerifierBusy，不创建第二个并行原生校验线程。Grok 的忙碌和超时映射为可重试故障，不提示重装 CLI。
 自启动写入失败不会停止额度刷新或计时器；通用设置中的开关显示红色错误状态及重试提示，诊断只记录 `AutostartFailed`，不包含异常内容。
 
 两个窗口始终保留各自含义。真实服务未提供某个窗口、重置时间或套餐时显示“—”“重置时间未提供”“套餐未知”。尤其 Grok 当前账单/缓存可能只返回每周窗口；**不把每周额度、额外余额或每月额度伪装成 5 小时额度**。图标优先显示 5 小时余量，缺失时显示每周余量。API 没有 5 小时数据时无法凭空补齐。
@@ -96,7 +96,7 @@ codex-verify: Rejected:Unsigned location=Npm signer=-
 
 - **未签名 npm CLI 默认不可用**：升级后需要在通用设置明确选择是否允许。npm 和 LocalAppData 都是用户可写目录；npm 开关意味着接受无法认证发布者的本机程序。LocalAppData 与自定义路径不提供未签名例外。
 - **离线或撤销缓存缺失**：缓存校验无法确认信任时拒绝启动；面板和设置始终显示相同的固定本地化文字 `CLI verification failed.` / `CLI 验证失败。`，不显示错误代码、路径或异常。不会因离线自动跳过校验，也不清理或修改系统 CRL / 证书缓存。
-- **原生校验挂起**：调用超时后仍占用唯一校验槽；后续检查立即拒绝，直至原生调用返回。证书颁发链更换也需要更新固定值。
+- **原生校验挂起**：调用超时后仍占用唯一校验槽；需要原生验证的后续检查在有界等待后拒绝，直至原生调用返回。迟到结果不会授权启动，也不会写入成功缓存。证书颁发链更换也需要更新固定值。
 
 自动测试通过注入模拟离线、空 CRL 缓存、未签名与错误发布者、超时及忙状态，不断网、不更改系统证书缓存。安装恢复只在仓库临时目录测试，并替换进程启动调用。
 ## 外观与设置
@@ -161,15 +161,25 @@ capture-{theme}-{lang}.json
 
 ## Grok 登录过期与诊断
 
-Grok 的登录故障、续期失败和 HTTP 401/403 显示“Grok 登录已过期” / “Grok sign-in expired”。弹窗与设置中的“重新登录” / “Sign in again”使用现有验证器解析 Grok CLI，直接运行 `grok.exe login`，在可见控制台等待登录；退出后重新读取额度。同一时刻只能启动一次登录。网络、DNS 与 HTTP 5xx 仍显示连接失败。
+Grok 的明确登录故障、连续六次续期失败，或令牌已过期时续期失败，显示“登录已过期，点重新登录” / “Sign-in expired — click Sign in again”。弹窗与设置中的“重新登录” / “Sign in again”使用现有验证器解析 Grok CLI，直接运行 `grok.exe login`，在可见控制台等待登录；退出后重新读取额度。同一时刻只能启动一次登录。令牌仍有效且未达到重试阈值时，网络、DNS 与 HTTP 5xx 显示连接失败；CLI 验证失败单独提示。
 
-失败诊断写入 `%LOCALAPPDATA%\AISubGauge2\logs\app.log`，仅含 ISO 时间戳、厂商、阶段、故障枚举及可用的 HTTP 状态码，不含异常原文、凭据、身份、响应内容或路径。超过 1 MiB 后在下次写入时轮转为 `app.1.log`，共保留两个文件；日志 IO 失败不影响额度读取。测试可通过 `SafeLog` 的 `directory` 参数注入仓库内目录，demo 模式不写生产日志。
+失败诊断写入 `%LOCALAPPDATA%\AISubGauge2\logs\app.log`，仅含 ISO 时间戳、厂商、阶段、故障枚举、验证状态/阶段及可用的 HTTP 状态码，不含异常原文、凭据、身份、响应内容或路径。LocalStatus 事件也写入该文件。超过 1 MiB 后在下次写入时轮转为 `app.1.log`，共保留两个文件；日志 IO 失败不影响额度读取。测试可通过 `SafeLog` 的 `directory` 参数注入仓库内目录，demo 模式不写生产日志。
 
 仅运行模拟凭据的 Grok 回归测试（不启动真实 Grok）：
 
 ```powershell
 dotnet run --project .\tests\AISubGauge.Tests -c Release -- --grok-signin
 ```
+
+### Grok refresh diagnostics and recovery
+
+Codex and Grok signature checks share a bounded queue (6 seconds by default) instead of rejecting ordinary concurrent checks. Native verification retains its 5-second timeout and hung-worker exclusion. Grok busy/timeout failures use the retryable verifier fault. Successful pinned signatures are cached in memory for one hour using full path, volume serial, file index, size and last-write time read from the retained file handle. Every resolve still opens and validates the lease and enforces the vendor publisher/chain pins; changed identity or cache expiry requires native verification again. Unsigned, rejected and late results are never cached.
+
+Run `dotnet run --project tests/AISubGauge.Tests -c Release -- --diag-grok` to diagnose the real executable resolver without reading credentials or launching Grok. Output contains closed verification stages/statuses, exception types, certificate thumbprints and the recognized publisher organization. If file access fails, an independent native signature check is also reported; that check cannot authorize execution or turn a failed resolver result into success.
+
+Grok refresh is scheduled 30 minutes before the parsed token expiry. Transient refresh failures retry after 30 seconds, 1, 2, 5, 10 and 15 minutes, with up to 20% positive jitter and a hard 15-minute cap. The background timer checks deadlines every 2 seconds; manual refreshes respect the same cooldown. Explicit authentication failures stop RPC retries until changed credentials are observed. Six consecutive failures or an expired token expose the existing Sign in again action; a publisher/chain verification failure remains distinct. A successful refresh resets the retry policy.
+
+The last successful quota windows and fetch time are saved in the settings directory as `last-good.json`. Failed requests retain those values with a stale label and observation time in the row and tray tooltip. This file contains no credentials or account identifiers. Run `dotnet run --project tests/AISubGauge.Tests -c Release -- --grok-reliability` for the fake-clock recovery drills; they also run in the full suite.
 
 ## 许可证
 

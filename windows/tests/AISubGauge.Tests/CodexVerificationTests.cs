@@ -44,12 +44,12 @@ internal static partial class Program
                 toggle.Checked = true; Application.DoEvents(); Check(app.Settings.AllowUnsignedCodexNpm);
             }
         });
-        Test("process-wide busy gate rejects immediately after timeout without a second native call", () =>
+        Test("process-wide busy gate rejects after bounded wait without a second native call", () =>
         {
             using var entered = new ManualResetEventSlim(); using var release = new ManualResetEventSlim();
             int calls = 0;
             var first = new AuthenticodeSignatures(new DelegateSignatures(_ => { Interlocked.Increment(ref calls); entered.Set(); release.Wait(); return signed; }), TimeSpan.FromMilliseconds(120));
-            var second = new AuthenticodeSignatures(new DelegateSignatures(_ => { Interlocked.Increment(ref calls); return signed; }));
+            var second = new AuthenticodeSignatures(new DelegateSignatures(_ => { Interlocked.Increment(ref calls); return signed; }), gateTimeout: TimeSpan.FromMilliseconds(10));
             try
             {
                 Equal(first.Verify(local).Diagnostic, VerificationStatus.VerifierTimeout); Check(entered.IsSet);
@@ -58,7 +58,7 @@ internal static partial class Program
                 {
                     var result = second.Verify(local); Equal(result.Status, SignatureStatus.Invalid); Equal(result.Diagnostic, VerificationStatus.VerifierBusy);
                 }
-                Check(watch.Elapsed < TimeSpan.FromSeconds(1)); Equal(calls, 1);
+                Check(watch.Elapsed >= TimeSpan.FromMilliseconds(150) && watch.Elapsed < TimeSpan.FromSeconds(3)); Equal(calls, 1);
             }
             finally { release.Set(); Check(SpinWait.SpinUntil(() => AuthenticodeSignatures.Idle, 2000)); }
             Equal(second.Verify(local), signed); Equal(calls, 2);
@@ -66,13 +66,13 @@ internal static partial class Program
         Test("busy diagnostic logs at three consecutive process-wide results once per streak and resets", () =>
         {
             var messages = new List<string>(); var log = new SafeLog(new(), messages.Add);
-            var probe = new AuthenticodeSignatures(new FakeSignatures(signed), log: log);
+            var probe = new AuthenticodeSignatures(new FakeSignatures(signed), log: log, gateTimeout: TimeSpan.FromMilliseconds(10));
             // The first incomplete streak must not contribute to the next one.
             foreach (int busyCalls in new[] { 2, 8, 8 })
             {
                 using var entered = new ManualResetEventSlim(); using var release = new ManualResetEventSlim();
                 var blocked = new AuthenticodeSignatures(new DelegateSignatures(_ => { entered.Set(); release.Wait(); return signed; }),
-                    TimeSpan.FromMilliseconds(120), log);
+                    TimeSpan.FromMilliseconds(120), log, gateTimeout: TimeSpan.FromMilliseconds(10));
                 int before = messages.Count;
                 try
                 {

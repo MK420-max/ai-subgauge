@@ -201,4 +201,8 @@
   <data name="FaultGrokCliNotInstalled" xml:space="preserve"><value>未安装 Grok CLI</value></data>
   <data name="FaultGrokVerificationFailed" xml:space="preserve"><value>Grok CLI 签名验证失败：必须由 X.AI LLC 签名并通过受信任证书链验证。请重新安装官方 Grok CLI。</value></data>
   <data name="FaultSignInRequired" xml:space="preserve"><value>请在对应应用中登录</value></data>
+  <data name="GrokSignInExpired" xml:space="preserve"><value>登录已过期，点重新登录</value></data>
+  <data name="GrokVerificationShort" xml:space="preserve"><value>Grok CLI 签名验证失败</value></data>
+  <data name="StaleValue" xml:space="preserve"><value>{0}（旧数据，更新于 {1}）</value></data>
+  <data name="GrokVerifierRetrying" xml:space="preserve"><value>签名验证暂不可用，稍后重试</value></data>
 </root>

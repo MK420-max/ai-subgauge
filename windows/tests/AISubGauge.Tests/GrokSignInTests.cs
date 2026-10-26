@@ -24,7 +24,7 @@ internal static partial class Program
                 {
                     using var provider = Make(vendor, new Handler(_ => throw new HttpRequestException(Secret, null, status)), ValidSource());
                     var snapshot = await provider.FetchAsync(); Equal(snapshot.Fault, Fault.SignIn);
-                    Equal(new Texts("en").Status(snapshot), vendor + " sign-in expired");
+                    Equal(new Texts("en").Status(snapshot), vendor == Vendor.Grok ? "Sign-in expired — click Sign in again" : vendor + " sign-in expired");
                 }
             });
             AsyncTest($"Grok refresh HTTP {(int)status} is sign-in expired and retains stage/status", async () =>
@@ -43,7 +43,7 @@ internal static partial class Program
             var refresh = new GrokCliRefresh(ValidSource(), Clock, _ => new FakeRpc((_, _) => throw new Exception(Secret)));
             using var provider = new SubscriptionProvider(Vendor.Grok, ExpiredSource(), Clock, new(), new(new(), lines.Add),
                 new Handler(_ => throw new InvalidOperationException()), refresh, cache);
-            AssertNotExpired(await provider.FetchAsync(), Fault.Network);
+            AssertExpired(await provider.FetchAsync(), Fault.Network);
             Equal(cache.Count, 0); Check(lines.Single().Contains("stage=refresh-rpc fault=Network"));
         });
         AsyncTest("Grok billing 401 then failed refresh logs each failing stage once", async () =>
@@ -56,11 +56,11 @@ internal static partial class Program
             Check(lines[0].Contains("stage=billing-http fault=SignIn http=401"));
             Check(lines[1].Contains("stage=refresh-rpc fault=Network"));
         });
-        AsyncTest("Grok premature RPC EOF is network, not expired", async () =>
+        AsyncTest("Grok premature RPC EOF retains network fault and exposes expired token", async () =>
         {
             var refresh = new GrokCliRefresh(ValidSource(), Clock, _ => new FakeRpc((_, _) => throw new SafeFailure(Fault.InvalidData)));
             using var provider = Make(Vendor.Grok, new Handler(_ => throw new InvalidOperationException()), ExpiredSource(), refresh);
-            AssertNotExpired(await provider.FetchAsync(), Fault.Network);
+            AssertExpired(await provider.FetchAsync(), Fault.Network);
         });
         AsyncTest("Grok refresh RPC preserves structured HTTP auth and server errors", async () =>
         {
@@ -84,8 +84,7 @@ internal static partial class Program
                 var refresh = new GrokCliRefresh(ValidSource(), Clock, _ => new FakeRpc((_, _) => throw new HttpRequestException(Secret, null, status)));
                 using var provider = Make(Vendor.Grok, new Handler(_ => throw new InvalidOperationException()), ExpiredSource(), refresh);
                 var snapshot = await provider.FetchAsync(); Equal(snapshot.Fault, Fault.Network);
-                Equal(new Texts("zh-CN").Status(snapshot), "连接失败，请稍后刷新");
-                Equal(new Texts("en").Status(snapshot), "Connection failed; try refreshing later");
+                AssertExpired(snapshot, Fault.Network);
             }
             using var server = Make(Vendor.Grok, new Handler(_ => Response("ignored", HttpStatusCode.InternalServerError)), ValidSource());
             Equal((await server.FetchAsync()).Fault, Fault.Network);
@@ -235,7 +234,7 @@ internal static partial class Program
         Equal(snapshot.Fault, expected);
         foreach (string lang in new[] { "en", "zh-CN" })
         {
-            var text = new Texts(lang); string message = lang == "en" ? "Grok sign-in expired" : "Grok 登录已过期";
+            var text = new Texts(lang); string message = lang == "en" ? "Sign-in expired — click Sign in again" : "登录已过期，点重新登录";
             Equal(text.Status(snapshot), message); Equal(CodexRowPresentation.PanelStatus(text, snapshot, Clock.Now), message);
             Equal(CodexRowPresentation.SettingsStatus(text, snapshot), message);
         }

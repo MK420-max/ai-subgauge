@@ -27,6 +27,11 @@ public static class LocalPathSafety
 }
 
 // Windows-only file access: do not follow links before validating the opened target.
+internal sealed class LocalFileFailure(VerificationStatus status) : IOException("Local file access failed.")
+{
+    internal VerificationStatus Status { get; } = status;
+}
+internal readonly record struct ExecutableFileIdentity(string FullPath, uint VolumeSerial, ulong FileIndex, ulong Size, ulong LastWriteTime);
 internal static class LocalFiles
 {
     private const uint OpenReparsePoint = 0x00200000;
@@ -65,6 +70,18 @@ internal static class LocalFiles
 
     public static FileStream OpenRead(string path, long maximum) => Open(path, maximum, createNew: false);
 
+    internal static ExecutableFileIdentity Identity(string path, SafeFileHandle handle)
+    {
+        string fullPath = FullPath(path);
+        ValidateHandle(handle, fullPath, directory: false);
+        if (!GetFileInformationByHandle(handle, out FileInformation info))
+            throw new IOException("Cannot read executable identity.");
+        return new(fullPath.ToUpperInvariant(), info.VolumeSerialNumber,
+            ((ulong)info.IndexHigh << 32) | info.IndexLow,
+            ((ulong)info.SizeHigh << 32) | info.SizeLow,
+            ((ulong)(uint)info.LastWriteTime.dwHighDateTime << 32) | (uint)info.LastWriteTime.dwLowDateTime);
+    }
+
     private static FileStream Open(string path, long maximum, bool createNew)
     {
         string fullPath = FullPath(path);
@@ -85,6 +102,7 @@ internal static class LocalFiles
                     throw new IOException("无法安全创建状态报告目录。");
                 LockDirectory(directory, directories);
             }
+            VerificationTrace.Step(VerificationStage.OpenLeaf);
             handle = OpenHandle(fullPath, createNew ? 0x40000000u : 0x80000000u,
                 createNew ? 0u : 1u, createNew ? 1u : 3u, OpenReparsePoint | Overlapped);
             ulong length = ValidateHandle(handle, fullPath, directory: false);
@@ -102,6 +120,7 @@ internal static class LocalFiles
 
     private static void LockDirectory(string path, List<SafeFileHandle> directories)
     {
+        VerificationTrace.Step(VerificationStage.OpenDirectory);
         SafeFileHandle handle = OpenHandle(path, 0, 1, 3, OpenReparsePoint | BackupSemantics);
         try { ValidateHandle(handle, path, directory: true); directories.Add(handle); }
         catch { handle.Dispose(); throw; }
@@ -112,21 +131,26 @@ internal static class LocalFiles
         SafeFileHandle handle = CreateFileW(path, access, share, IntPtr.Zero, disposition, flags, IntPtr.Zero);
         if (!handle.IsInvalid) return handle;
         int error = Marshal.GetLastWin32Error();
+        VerificationTrace.Current.Value?.Sink?.Invoke("openFailure=" + (error switch { 2 => "FileNotFound", 3 => "DirectoryNotFound", 5 => "AccessDenied", 32 => "SharingViolation", _ => "Other" }));
         handle.Dispose();
         if (error == 2) throw new FileNotFoundException("未找到本地文件。");
         if (error == 3) throw new DirectoryNotFoundException("未找到本地目录。");
+        if (error is 5 or 32) throw new LocalFileFailure(error == 5 ? VerificationStatus.AccessDenied : VerificationStatus.SharingViolation);
         throw new IOException("无法安全打开本地文件。");
     }
 
     private static ulong ValidateHandle(SafeFileHandle handle, string expectedPath, bool directory)
     {
+        VerificationTrace.Step(VerificationStage.FileMetadata);
         if (GetFileType(handle) != 1 || !GetFileInformationByHandle(handle, out FileInformation info) ||
             (info.Attributes & (FileAttributes.ReparsePoint | FileAttributes.Device)) != 0 ||
             ((info.Attributes & FileAttributes.Directory) != 0) != directory)
             throw new IOException("本地路径必须为普通文件或目录，不能使用重解析点或设备。");
+        VerificationTrace.Step(VerificationStage.FinalPath);
         var finalPath = new StringBuilder(32768);
         uint count = GetFinalPathNameByHandleW(handle, finalPath, (uint)finalPath.Capacity, 0);
         string actual = finalPath.ToString();
+        VerificationTrace.Current.Value?.Sink?.Invoke($"finalPathLength={count} extendedDosPrefix={actual.StartsWith(@"\\?\", StringComparison.Ordinal)} directory={directory}");
         if (count == 0 || count >= (uint)finalPath.Capacity || !actual.StartsWith(@"\\?\", StringComparison.Ordinal) ||
             !FullPath(actual.Substring(4)).TrimEnd('\\').Equals(expectedPath.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
             throw new IOException("打开后的本地路径与请求路径不一致。");

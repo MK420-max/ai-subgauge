@@ -7,6 +7,7 @@ public enum Fault { None, SignIn, Network, InvalidData, RefreshFailed, Timeout, 
 public enum Plan { Unknown, Plus, Pro, Max, SuperGrok, SuperGrokHeavy, Team, Enterprise, Free }
 public enum Language { System, Chinese, English }
 public enum Theme { System, Light, Dark }
+public enum GrokState { Ready, Retrying, SignInExpired, VerificationFailed }
 public interface IClock { DateTimeOffset Now { get; } }
 public sealed class SystemClock : IClock { public DateTimeOffset Now => DateTimeOffset.UtcNow; }
 
@@ -16,6 +17,8 @@ public sealed record Window(double? Remaining = null, DateTimeOffset? Reset = nu
 }
 public sealed record Snapshot(Vendor Vendor, Plan Plan, Window FiveHour, Window Weekly, DateTimeOffset Updated, Fault Fault = Fault.None)
 {
+    public bool Stale { get; init; }
+    public GrokState GrokState { get; init; }
     public static Snapshot Failure(Vendor vendor, Fault fault, IClock clock) => new(vendor, Plan.Unknown, new(), new(), clock.Now, fault);
     public static Snapshot Demo(Vendor vendor, IClock clock) => vendor switch
     {
@@ -27,7 +30,8 @@ public sealed record Snapshot(Vendor Vendor, Plan Plan, Window FiveHour, Window 
 public static class Presentation
 {
     public static bool SignInExpired(Fault fault) => fault == Fault.SignIn;
-    public static bool CanSignInAgain(Snapshot snapshot) => snapshot.Vendor == Vendor.Grok && SignInExpired(snapshot.Fault);
+    public static bool CanSignInAgain(Snapshot snapshot) => snapshot.Vendor == Vendor.Grok &&
+        (SignInExpired(snapshot.Fault) || snapshot.GrokState == GrokState.SignInExpired);
     public static string Color(double? percent, bool dark) => percent is null ? (dark ? "#636366" : "#AEAEB2") :
         percent >= 50 ? (dark ? "#30D158" : "#34C759") : percent >= 20 ? (dark ? "#FF9F0A" : "#FF9500") : (dark ? "#FF453A" : "#FF3B30");
     public static string Percent(double? value) => value is double n && double.IsFinite(n) ? Math.Clamp(n, 0, 100).ToString("0", CultureInfo.InvariantCulture) + "%" : "—";

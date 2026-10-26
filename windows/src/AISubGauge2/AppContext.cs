@@ -76,6 +76,7 @@ public sealed class AppContext : ApplicationContext
         this.options = options; store = settingsStore ?? new(SettingsStore.DefaultDirectory, Capturing || Demo);
         var redactor = new Redactor();
         log = startupLog ?? new SafeLog(redactor, directory: Capturing || Demo ? null : SafeLog.DefaultDirectory);
+        if (!Capturing && !Demo) Executables.Log = log;
         autostart = new(registry ?? new RunRegistry(), log);
         Settings = Capturing || Demo ? new Settings() : store.Load();
         if (Capturing) Settings.AlwaysShow = true;
@@ -90,7 +91,8 @@ public sealed class AppContext : ApplicationContext
             var credentials = new CredentialFiles(Clock);
             providers.Add(new CodexProvider(Clock, log, allowUnsignedNpm: () => Settings.AllowUnsignedCodexNpm));
             providers.Add(new SubscriptionProvider(Vendor.Claude, credentials, Clock, redactor, log));
-            providers.Add(new SubscriptionProvider(Vendor.Grok, credentials, Clock, redactor, log, refresh: new GrokCliRefresh(credentials, Clock, log: log), cache: new GrokBotCache(Clock)));
+            providers.Add(new SubscriptionProvider(Vendor.Grok, credentials, Clock, redactor, log, refresh: new GrokCliRefresh(credentials, Clock, log: log), cache: new GrokBotCache(Clock),
+                lastGoodStore: new GrokLastGoodStore(SettingsStore.DefaultDirectory, log)));
         }
         panel = new(this); settingsForm = new(this);
         for (int i = 0; i < icons.Length; i++)
@@ -100,10 +102,12 @@ public sealed class AppContext : ApplicationContext
         activation = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\AISubGauge2.Activate");
         activationWait = ThreadPool.RegisterWaitForSingleObject(activation, (_, _) => Dispatch(OpenSettings), null, Timeout.Infinite, false);
         SystemEvents.UserPreferenceChanged += PreferencesChanged;
-        refreshTimer.Tick += async (_, _) => await RefreshAsync(); runningTimer.Tick += (_, _) =>
+        refreshTimer.Tick += async (_, _) => await RefreshAsync(); runningTimer.Tick += async (_, _) =>
         {
             UpdateVisibility(); panel.Invalidate();
             if (renderedTrayMetrics != TrayIconMetrics.Read() || renderedTrayDark != TrayDark) UpdateIcons();
+            if (!Demo && !Capturing && !Refreshing && providers.OfType<SubscriptionProvider>().Any(p => p.Vendor == Vendor.Grok && p.NextBackgroundRefresh <= Clock.Now))
+                await RefreshAsync(grokOnly: true);
         };
         UpdateMenus(); UpdateVisibility(); UpdateIcons();
         dispatcher.BeginInvoke(async () =>
@@ -171,13 +175,13 @@ public sealed class AppContext : ApplicationContext
         catch (Exception error)
         {
             var failure = SafeFailure.Classify(error, FailureStage.SignInLaunch, Fault.Network);
-            log.Write(Vendor.Grok, failure.Fault, FailureStage.SignInLaunch, failure.HttpStatus);
+            log.Write(Vendor.Grok, failure.Fault, FailureStage.SignInLaunch, failure.HttpStatus, failure.Verification);
             if (!disposed)
                 MessageBox.Show(Text.Error(Vendor.Grok, failure.Fault), Text["AppTitle"], MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally { if (!disposed) { panel.UpdateSignIn(); settingsForm.UpdateSignIn(); } }
     }
-    public async Task RefreshAsync(bool queue = false)
+    public async Task RefreshAsync(bool queue = false, bool grokOnly = false)
     {
         if (disposed) return;
         if (Refreshing) { refreshPending |= queue; return; }
@@ -187,9 +191,12 @@ public sealed class AppContext : ApplicationContext
             do
             {
                 refreshPending = false;
-                var results = Demo ? Enum.GetValues<Vendor>().Select(v => Snapshot.Demo(v, Clock)).ToArray() : await Task.WhenAll(providers.Select(p => p.FetchAsync(lifetime.Token)));
+                var results = Demo ? Enum.GetValues<Vendor>().Select(v => Snapshot.Demo(v, Clock)).ToArray() :
+                    await Task.WhenAll(providers.Where(p => !grokOnly || p.Vendor == Vendor.Grok).Select(p => p.FetchAsync(lifetime.Token)));
                 if (disposed) return;
-                Snapshots = results; Updated = Clock.Now; UpdateVisibility(); UpdateIcons();
+                foreach (var result in results) Snapshots[(int)result.Vendor] = result;
+                Updated = Clock.Now; UpdateVisibility(); UpdateIcons();
+                grokOnly = false; // A queued user request always refreshes every provider.
             }
             while (refreshPending && !disposed);
         }
@@ -229,8 +236,7 @@ public sealed class AppContext : ApplicationContext
             var replacement = family.CreateIcon(TrayIconSize);
             var old = icons[i].Icon; icons[i].Icon = replacement; old?.Dispose();
             TrayIconFamilies[i] = family;
-            string tooltip = Text.Name(snapshot.Vendor) + " · " + Text.Status(snapshot);
-            icons[i].Text = tooltip.Length > 63 ? tooltip[..63] : tooltip;
+            icons[i].Text = Text.TrayStatus(snapshot);
         }
     }
     private void UpdateMenus()

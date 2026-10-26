@@ -63,6 +63,7 @@ public abstract class ProviderBase(IClock clock, SafeLog log) : IProvider
     protected IClock Clock { get; } = clock;
     protected SafeLog Log { get; } = log;
     protected abstract Task<Snapshot> FetchCoreAsync(CancellationToken cancellation);
+    protected virtual Snapshot OnResult(Snapshot snapshot, SafeFailure? failure) => snapshot;
     public async Task<Snapshot> FetchAsync(CancellationToken cancellation = default)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
@@ -72,13 +73,13 @@ public abstract class ProviderBase(IClock clock, SafeLog log) : IProvider
             var result = await FetchCoreAsync(timeout.Token).ConfigureAwait(false);
             if (result.FiveHour.Percent is null && result.Weekly.Percent is null && result.Fault == Fault.None) throw new SafeFailure(Fault.InvalidData);
             Log.Write(Vendor, result.Fault);
-            return result;
+            return OnResult(result, null);
         }
         catch (Exception error)
         {
             var failure = SafeFailure.Classify(error, FailureStage.UsageRpc);
-            Log.Write(Vendor, failure.Fault, failure.Stage!.Value, failure.HttpStatus);
-            return Snapshot.Failure(Vendor, failure.Fault, Clock);
+            Log.Write(Vendor, failure.Fault, failure.Stage!.Value, failure.HttpStatus, failure.Verification);
+            return OnResult(Snapshot.Failure(Vendor, failure.Fault, Clock), failure);
         }
     }
 }
@@ -91,12 +92,21 @@ public sealed class SubscriptionProvider : ProviderBase, IDisposable
     private readonly Redactor redactor;
     private Credential? renewed;
     private Credential? renewalSource;
+    private Credential? observed;
+    private DateTimeOffset? activeExpiry;
+    private Snapshot? lastGood;
+    private readonly GrokLastGoodStore? lastGoodStore;
+    public GrokRefreshPolicy RefreshPolicy { get; }
+    public DateTimeOffset NextBackgroundRefresh { get; private set; } = DateTimeOffset.MaxValue;
     public override Vendor Vendor { get; }
     public SubscriptionProvider(Vendor vendor, ICredentialSource source, IClock clock, Redactor redactor, SafeLog log,
-        HttpMessageHandler? handler = null, IGrokRefresh? refresh = null, IGrokCache? cache = null) : base(clock, log)
+        HttpMessageHandler? handler = null, IGrokRefresh? refresh = null, IGrokCache? cache = null,
+        GrokLastGoodStore? lastGoodStore = null, Func<double>? jitter = null) : base(clock, log)
     {
         if (vendor == Vendor.Codex) throw new ArgumentException("Use the Codex RPC provider.");
         Vendor = vendor; this.source = source; this.refresh = refresh; this.cache = cache; this.redactor = redactor;
+        RefreshPolicy = new(clock, jitter); this.lastGoodStore = lastGoodStore;
+        if (vendor == Vendor.Grok) lastGood = lastGoodStore?.Load();
         client = new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseDefaultCredentials = false }) { Timeout = TimeSpan.FromSeconds(20) };
     }
     protected override async Task<Snapshot> FetchCoreAsync(CancellationToken cancellation)
@@ -118,9 +128,16 @@ public sealed class SubscriptionProvider : ProviderBase, IDisposable
                 throw new SafeFailure(Fault.SignInRequired);
             }
             credential.Protect(redactor);
+            if (Vendor == Vendor.Grok && (observed is null || observed.Token != credential.Token ||
+                observed.Expires != credential.Expires || observed.UserId != credential.UserId || observed.ClientId != credential.ClientId))
+            {
+                RefreshPolicy.Reset(); observed = credential;
+            }
             if (renewed is not null && credential.Token == renewalSource?.Token && renewed.UserId == credential.UserId && renewed.ClientId == credential.ClientId && renewed.Expires > Clock.Now && renewed.Expires > credential.Expires) credential = renewed;
+            activeExpiry = credential.Expires;
+            if (Vendor == Vendor.Grok) RefreshPolicy.ThrowIfWaiting();
             bool didRefresh = false;
-            if (Vendor == Vendor.Grok && credential.Expires <= Clock.Now)
+            if (Vendor == Vendor.Grok && credential.Expires <= Clock.Now.AddMinutes(30))
             {
                 credential = await Renew(credential, cancellation).ConfigureAwait(false); didRefresh = true;
             }
@@ -146,11 +163,38 @@ public sealed class SubscriptionProvider : ProviderBase, IDisposable
                 using var document = await Json.ReadAsync(stream, cancellation).ConfigureAwait(false);
                 var result = Parse(document.RootElement, credential.Plan);
                 if (result.FiveHour.Percent is null && result.Weekly.Percent is null) throw new SafeFailure(Fault.InvalidData);
+                if (Vendor == Vendor.Grok)
+                {
+                    var proactive = credential.Expires?.AddMinutes(-30) ?? Clock.Now.AddMinutes(5);
+                    // A CLI may return a still-valid token without extending its lifetime. Do not spin.
+                    NextBackgroundRefresh = proactive <= Clock.Now
+                        ? (credential.Expires is { } expires && expires < Clock.Now.AddMinutes(5) ? expires : Clock.Now.AddMinutes(5))
+                        : proactive;
+                }
                 return result;
             }
             throw new SafeFailure(Fault.RefreshFailed, stage: FailureStage.RefreshRpc);
         }
         catch (Exception error) { throw SafeFailure.Classify(error, stage); }
+    }
+    protected override Snapshot OnResult(Snapshot snapshot, SafeFailure? failure)
+    {
+        if (Vendor != Vendor.Grok) return snapshot;
+        if (failure is null && snapshot.Fault == Fault.None)
+        {
+            lastGood = snapshot; lastGoodStore?.Save(snapshot); return snapshot;
+        }
+        // Definitive auth failures stop automatic retries until a changed credential is observed.
+        if (failure?.Fault == Fault.SignIn) RefreshPolicy.Stop(failure);
+        if (RefreshPolicy.LastFailure is not null) NextBackgroundRefresh = RefreshPolicy.NextAttempt;
+        else NextBackgroundRefresh = Clock.Now.AddMinutes(5);
+        bool verification = snapshot.Fault == Fault.GrokVerificationFailed &&
+            failure?.Verification?.Status is not (VerificationStatus.VerifierBusy or VerificationStatus.VerifierTimeout);
+        var state = verification ? GrokState.VerificationFailed :
+            snapshot.Fault is Fault.SignIn or Fault.RefreshFailed || RefreshPolicy.Failures >= GrokRefreshPolicy.SignInThreshold ||
+            (RefreshPolicy.LastFailure is not null && activeExpiry <= Clock.Now)
+                ? GrokState.SignInExpired : GrokState.Retrying;
+        return (lastGood ?? snapshot) with { Fault = snapshot.Fault, Stale = lastGood is not null, GrokState = state };
     }
     private async Task<Credential> Renew(Credential expected, CancellationToken cancellation)
     {
@@ -160,11 +204,13 @@ public sealed class SubscriptionProvider : ProviderBase, IDisposable
             var result = await refresh.RefreshAsync(expected, cancellation).ConfigureAwait(false);
             result.Protect(redactor);
             if (result.UserId != expected.UserId || result.ClientId != expected.ClientId || result.Expires is null || result.Expires <= Clock.Now) throw new SafeFailure(Fault.RefreshFailed);
-            renewalSource = expected; renewed = result; return result;
+            renewalSource = expected; renewed = result; activeExpiry = result.Expires; RefreshPolicy.Reset(); return result;
         }
         catch (Exception error)
         {
-            throw SafeFailure.Classify(error, error is HttpRequestException ? FailureStage.RefreshHttp : FailureStage.RefreshRpc, Fault.Network);
+            var failure = SafeFailure.Classify(error, error is HttpRequestException ? FailureStage.RefreshHttp : FailureStage.RefreshRpc, Fault.Network);
+            RefreshPolicy.Failed(failure);
+            throw failure;
         }
     }
     private Snapshot Parse(JsonElement root, Plan plan)

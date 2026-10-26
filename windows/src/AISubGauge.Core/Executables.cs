@@ -5,12 +5,16 @@ using System.Security.Cryptography.X509Certificates;
 namespace AISubGauge.Core;
 
 public enum SignatureStatus { Unsigned, Valid, Invalid }
-public enum VerificationStatus { Invalid, Unsigned, PublisherMismatch, VerifierBusy, VerifierTimeout, RevocationFailure, RevocationOffline, NoRevocationCheck, NotFound }
+public enum VerificationStatus { Invalid, Unsigned, PublisherMismatch, VerifierBusy, VerifierTimeout, RevocationFailure, RevocationOffline, NoRevocationCheck, NotFound, AccessDenied, SharingViolation }
 public enum ExecutableLocation { LocalAppData, Npm, Override, None }
-public sealed record ExecutableVerification(VerificationStatus Status, ExecutableLocation Location, string? Signer = null);
+public sealed record ExecutableVerification(VerificationStatus Status, ExecutableLocation Location, string? Signer = null, VerificationStage Stage = VerificationStage.None);
 public readonly record struct ExecutableSignature(SignatureStatus Status, X500DistinguishedName? Subject = null,
     IReadOnlyList<string>? ChainThumbprints = null, VerificationStatus Diagnostic = VerificationStatus.Invalid);
-public interface IExecutableSignatures { ExecutableSignature Verify(string path); }
+public interface IExecutableSignatures
+{
+    ExecutableSignature Verify(string path);
+    ExecutableSignature Verify(string path, Stream lease) => Verify(path);
+}
 public interface IExecutableFiles
 {
     IEnumerable<string> Directories(string path);
@@ -31,6 +35,13 @@ public sealed class ExecutableResolver(IExecutableFiles files, IExecutableSignat
 {
     public VerifiedExecutable Resolve(string name, string? configured = null, bool allowUnsignedCodexNpm = false)
     {
+        var previousTrace = VerificationTrace.Current.Value;
+        VerificationTrace.Current.Value ??= new();
+        try { return ResolveCore(name, configured, allowUnsignedCodexNpm); }
+        finally { VerificationTrace.Current.Value = previousTrace; }
+    }
+    private VerifiedExecutable ResolveCore(string name, string? configured, bool allowUnsignedCodexNpm)
+    {
         if (name is not ("codex" or "grok")) throw new SafeFailure(Fault.SignInRequired);
         bool custom = !string.IsNullOrWhiteSpace(configured);
         var candidates = custom ? new[] { configured! } : Candidates(name);
@@ -42,21 +53,28 @@ public sealed class ExecutableResolver(IExecutableFiles files, IExecutableSignat
             {
                 if (!Path.IsPathFullyQualified(candidate) || !Path.GetExtension(candidate).Equals(".exe", StringComparison.OrdinalIgnoreCase)) continue;
                 string path = Path.GetFullPath(candidate);
+                VerificationTrace.Step(VerificationStage.KnownLocation);
                 // A Codex override is the sole exception to the location allowlist, and must be signed by OpenAI.
                 if (!(custom && name == "codex") && !KnownLocation(name, path)) continue;
+                VerificationTrace.Step(VerificationStage.OpenFile);
                 lease = files.OpenRead(path); // Retain the non-write/non-delete-sharing handle until launch.
                 var location = custom ? ExecutableLocation.Override : NpmCodexPaths().Any(p => Same(path, p))
                     ? ExecutableLocation.Npm : ExecutableLocation.LocalAppData;
                 failure = new(VerificationStatus.Invalid, location);
-                var signature = signatures.Verify(path);
+                VerificationTrace.Step(VerificationStage.Signature);
+                var signature = signatures.Verify(path, lease);
+                var signatureStage = VerificationTrace.Current.Value!.Stage;
+                VerificationTrace.Step(VerificationStage.Organization);
                 string? signer = CodexPublisher.ReadOrganization(signature.Subject);
+                VerificationTrace.Organization(signer);
                 if (signature.Status == SignatureStatus.Invalid)
                 {
-                    failure = new(signature.Diagnostic, location, signer);
+                    failure = new(signature.Diagnostic, location, signer, signatureStage);
                     // The verifier is process-wide. Further candidates cannot recover a hung worker.
                     if (signature.Diagnostic is VerificationStatus.VerifierBusy or VerificationStatus.VerifierTimeout) break;
                     continue;
                 }
+                VerificationTrace.Step(VerificationStage.Publisher);
                 if (name == "codex")
                 {
                     if (signature.Status == SignatureStatus.Valid && !CodexPublisher.Accepts(signature))
@@ -66,22 +84,32 @@ public sealed class ExecutableResolver(IExecutableFiles files, IExecutableSignat
                 }
                 else if (!GrokPublisher.Accepts(signature))
                 {
-                    failure = new(signature.Status == SignatureStatus.Unsigned ? VerificationStatus.Unsigned : VerificationStatus.PublisherMismatch, location, signer);
+                    failure = new(signature.Status == SignatureStatus.Unsigned ? VerificationStatus.Unsigned : VerificationStatus.PublisherMismatch, location, signer, VerificationStage.Publisher);
                     continue;
                 }
                 var result = new VerifiedExecutable(path, custom, lease, signature.Status == SignatureStatus.Unsigned, location, signer);
+                VerificationTrace.Step(VerificationStage.Resolved);
                 lease = null; return result;
             }
             catch (FileNotFoundException) { }
             catch (DirectoryNotFoundException) { }
-            catch { failure = failure with { Status = VerificationStatus.Invalid }; /* Fail closed without exposing paths. */ }
+            catch (Exception error)
+            {
+                VerificationTrace.Exception(error);
+                failure = failure with { Status = error switch
+                {
+                    LocalFileFailure local => local.Status,
+                    UnauthorizedAccessException => VerificationStatus.AccessDenied,
+                    _ => VerificationStatus.Invalid
+                }, Stage = VerificationTrace.Current.Value!.Stage };
+            }
             finally { lease?.Dispose(); }
         }
         throw new SafeFailure(failure.Status switch
         {
             VerificationStatus.NotFound => name == "grok" ? Fault.GrokCliNotInstalled : Fault.SignInRequired,
-            _ when name == "grok" => Fault.GrokVerificationFailed,
             VerificationStatus.VerifierBusy or VerificationStatus.VerifierTimeout => Fault.VerifierUnresponsive,
+            _ when name == "grok" => Fault.GrokVerificationFailed,
             _ => Fault.VerificationFailed
         }, failure);
     }
@@ -120,6 +148,7 @@ internal sealed class ExecutableFiles : IExecutableFiles
 }
 public static class Executables
 {
+    public static SafeLog Log { get; set; } = new(new Redactor());
     private static readonly ExecutableResolver Resolver = new(new ExecutableFiles(), new AuthenticodeSignatures(), new(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -201,7 +230,8 @@ public static class GrokPublisher
 }
 
 // Bound the entire native operation, including trust-state cleanup. No native work on the UI thread.
-public sealed class AuthenticodeSignatures(IExecutableSignatures? verifier = null, TimeSpan? timeout = null, SafeLog? log = null) : IExecutableSignatures
+public sealed class AuthenticodeSignatures(IExecutableSignatures? verifier = null, TimeSpan? timeout = null, SafeLog? log = null,
+    TimeSpan? gateTimeout = null, TimeProvider? clock = null) : IExecutableSignatures
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static int consecutiveBusy;
@@ -210,18 +240,44 @@ public sealed class AuthenticodeSignatures(IExecutableSignatures? verifier = nul
     public const uint ProviderFlags = 0x80 | CacheOnlyUrlRetrieval; // Revocation: chain excluding root, cache only.
     private readonly IExecutableSignatures verifier = verifier ?? new NativeAuthenticodeSignatures();
     private readonly TimeSpan timeout = timeout ?? TimeSpan.FromSeconds(5);
-    private readonly SafeLog log = log ?? new(new Redactor());
-    public ExecutableSignature Verify(string path)
+    private readonly TimeSpan gateTimeout = gateTimeout ?? (timeout ?? TimeSpan.FromSeconds(5)) + TimeSpan.FromSeconds(1);
+    private readonly TimeProvider clock = clock ?? TimeProvider.System;
+    private readonly SafeLog? log = log;
+    private sealed record CachedSignature(ExecutableFileIdentity Identity, ExecutableSignature Signature, long CheckedAt);
+    private readonly Dictionary<string, CachedSignature> cache = new(StringComparer.OrdinalIgnoreCase);
+    public ExecutableSignature Verify(string path) => VerifyCore(path, null);
+    public ExecutableSignature Verify(string path, Stream lease)
     {
-        bool busy, reportBusy = false;
+        // Only a validated, retained file handle can supply cache identity. Path-only diagnostics
+        // and synthetic streams always perform verification and cannot populate the cache.
+        var identity = lease is FileStream file ? LocalFiles.Identity(path, file.SafeFileHandle) : (ExecutableFileIdentity?)null;
+        VerificationTrace.Step(VerificationStage.Signature);
+        return VerifyCore(path, identity);
+    }
+    private bool TryCached(ExecutableFileIdentity? identity, out ExecutableSignature signature)
+    {
+        lock (cache)
+        {
+            if (identity is { } key && cache.TryGetValue(key.FullPath, out var entry) && entry.Identity == key &&
+                clock.GetElapsedTime(entry.CheckedAt) < TimeSpan.FromHours(1))
+            { signature = entry.Signature; return true; }
+        }
+        signature = default; return false;
+    }
+    private ExecutableSignature VerifyCore(string path, ExecutableFileIdentity? identity)
+    {
+        if (TryCached(identity, out var cached)) return cached;
+        // Never wait under the bookkeeping lock: other callers must be able to enter after
+        // the worker releases the semaphore. Ordinary concurrent Codex/Grok checks queue here.
+        bool busy = !Gate.Wait(gateTimeout), reportBusy = false;
         lock (Gate)
         {
-            busy = !Gate.Wait(0);
             if (!busy) consecutiveBusy = 0;
             else if (consecutiveBusy < 3) reportBusy = ++consecutiveBusy == 3;
         }
-        if (reportBusy) log.Write(LocalStatus.VerifierBusyRepeated);
+        if (reportBusy) (log ?? Executables.Log).Write(LocalStatus.VerifierBusyRepeated);
         if (busy) return new(SignatureStatus.Invalid, Diagnostic: VerificationStatus.VerifierBusy);
+        if (TryCached(identity, out cached)) { Gate.Release(); return cached; }
         Task<ExecutableSignature> worker;
         try
         {
@@ -230,12 +286,26 @@ public sealed class AuthenticodeSignatures(IExecutableSignatures? verifier = nul
             worker = Task.Run(() =>
             {
                 try { return verifier.Verify(path); }
-                catch { return new ExecutableSignature(SignatureStatus.Invalid); }
+                catch (Exception error) { VerificationTrace.Exception(error); return new ExecutableSignature(SignatureStatus.Invalid); }
                 finally { Gate.Release(); } // Only the native worker can release after it returns, even after timeout.
             });
         }
         catch { Gate.Release(); return new(SignatureStatus.Invalid); }
-        try { return worker.WaitAsync(timeout).GetAwaiter().GetResult(); }
+        try
+        {
+            var signature = worker.WaitAsync(timeout).GetAwaiter().GetResult();
+            // Only the waiting caller can cache a timely success. A worker finishing after
+            // timeout never caches its result. Publisher/chain pins are also checked on every resolve.
+            if (identity is { } key && (CodexPublisher.Accepts(signature) || GrokPublisher.Accepts(signature)))
+            {
+                lock (cache)
+                {
+                    if (cache.Count >= 128) cache.Clear();
+                    cache[key.FullPath] = new(key, signature, clock.GetTimestamp());
+                }
+            }
+            return signature;
+        }
         catch (TimeoutException) { return new(SignatureStatus.Invalid, Diagnostic: VerificationStatus.VerifierTimeout); }
         catch { return new(SignatureStatus.Invalid); }
     }
@@ -262,6 +332,7 @@ internal sealed class NativeAuthenticodeSignatures : IExecutableSignatures
         try
         {
             Marshal.StructureToPtr(file, pointer, false); marshalled = true;
+            VerificationTrace.Step(VerificationStage.NativeTrust);
             int status = WinVerifyTrust(new IntPtr(-1), ref action, ref data);
             IntPtr provider = data.State == IntPtr.Zero ? IntPtr.Zero : WTHelperProvDataFromStateData(data.State);
             IntPtr signerPointer = provider == IntPtr.Zero ? IntPtr.Zero : WTHelperGetProvSignerFromChain(provider, 0, false, 0);
@@ -272,20 +343,23 @@ internal sealed class NativeAuthenticodeSignatures : IExecutableSignatures
                 return new(noSigner ? SignatureStatus.Unsigned : SignatureStatus.Invalid);
             }
             if (status != 0 || signerPointer == IntPtr.Zero) return AuthenticodeSignatures.NativeFailure(status);
+            VerificationTrace.Step(VerificationStage.NativeSigner);
             var signer = Marshal.PtrToStructure<ProviderSigner>(signerPointer);
             if (signer.Error != 0 || signer.CertCount is 0 or > 64 || signer.CertChain == IntPtr.Zero) return new(SignatureStatus.Invalid);
             var chain = new List<string>(); X500DistinguishedName? subject = null;
             for (int i = 0; i < signer.CertCount; i++)
             {
+                VerificationTrace.Step(VerificationStage.NativeChain);
                 var entry = Marshal.PtrToStructure<ProviderCertificate>(IntPtr.Add(signer.CertChain, checked(i * Marshal.SizeOf<ProviderCertificate>())));
                 if (entry.Certificate == IntPtr.Zero || entry.Error != 0) return new(SignatureStatus.Invalid);
                 using var cert = new X509Certificate2(entry.Certificate);
                 if (i == 0) subject = new X500DistinguishedName(cert.SubjectName.RawData);
                 chain.Add(cert.Thumbprint);
+                VerificationTrace.Certificate(cert.Thumbprint);
             }
             return new(SignatureStatus.Valid, subject, chain.ToArray());
         }
-        catch { return new(SignatureStatus.Invalid); }
+        catch (Exception error) { VerificationTrace.Exception(error); return new(SignatureStatus.Invalid); }
         finally
         {
             try
