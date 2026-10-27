@@ -6,10 +6,26 @@ namespace AISubGauge.Core;
 
 public static class RefreshCleanup
 {
-    public static void TryDelete(string directory, SafeLog log, Action<string>? delete = null)
+    public static void TryDelete(string directory, SafeLog log, Action<string>? delete = null, Action<int>? sleep = null)
     {
-        try { (delete ?? (path => Directory.Delete(path, true)))(directory); }
-        catch { log.Write(LocalStatus.RefreshCleanupFailed); }
+        Action<string> remove = delete ?? (path => Directory.Delete(path, true));
+        bool managed = delete is null;
+        if (managed && !Directory.Exists(directory)) return;
+        for (int attempt = 1; attempt <= 3; ++attempt)
+        {
+            try { remove(directory); return; }
+            catch (Exception error)
+            {
+                if (managed && !Directory.Exists(directory)) return;
+                if (error is not (IOException or UnauthorizedAccessException) || attempt == 3)
+                {
+                    log.Write(LocalStatus.RefreshCleanupFailed);
+                    return;
+                }
+                Action<int> delay = sleep ?? (milliseconds => System.Threading.Thread.Sleep(milliseconds));
+                delay(100);
+            }
+        }
     }
 }
 
@@ -119,13 +135,18 @@ public sealed class CodexProvider(IClock clock, SafeLog log, Func<IRpcSession>? 
         return new(Vendor, plan, five, week, Clock.Now);
     }
 }
-public sealed class GrokCliRefresh(ICredentialSource source, IClock clock, Func<Credential, IRpcSession>? factory = null, SafeLog? log = null) : IGrokRefresh
+public sealed class GrokCliRefresh(ICredentialSource source, IClock clock, Func<Credential, IRpcSession>? factory = null, SafeLog? log = null, string? scratchRoot = null) : IGrokRefresh
 {
     public async Task<Credential> RefreshAsync(Credential expected, CancellationToken cancellation)
     {
         string? directory = null;
         try
         {
+            if (factory is null || scratchRoot is not null)
+            {
+                directory = Path.Combine(scratchRoot ?? Path.Combine(SettingsStore.DefaultDirectory, "refresh"), Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(directory);
+            }
             IRpcSession session;
             if (factory is not null) session = factory(expected);
             else
@@ -134,12 +155,10 @@ public sealed class GrokCliRefresh(ICredentialSource source, IClock clock, Func<
                 var current = await SafeFailure.AtAsync(FailureStage.ReadCredentials, () => source.ReadAsync(Vendor.Grok, cancellation)).ConfigureAwait(false);
                 if (current is null) throw new SafeFailure(Fault.RefreshFailed);
                 if (current.UserId != expected.UserId || current.ClientId != expected.ClientId) throw new SafeFailure(Fault.SignIn);
-                directory = Path.Combine(SettingsStore.DefaultDirectory, "refresh", Guid.NewGuid().ToString("N"));
-                Directory.CreateDirectory(directory);
                 using var executable = await Executables.OpenAsync("grok").ConfigureAwait(false);
-                session = new RpcSession(executable.Path, ["agent", "stdio"], directory, new Dictionary<string, string>
+                session = new RpcSession(executable.Path, ["agent", "stdio"], directory!, new Dictionary<string, string>
                 {
-                    ["GROK_HOME"] = directory, ["GROK_AUTH_PATH"] = CredentialFiles.GrokPath,
+                    ["GROK_HOME"] = directory!, ["GROK_AUTH_PATH"] = CredentialFiles.GrokPath,
                     ["GROK_OAUTH2_CLIENT_ID"] = expected.ClientId, ["GROK_OAUTH2_ISSUER"] = "https://auth.x.ai",
                     ["GROK_TELEMETRY_ENABLED"] = "0", ["GROK_EXTERNAL_OTEL"] = "0", ["GROK_LOG_FILE"] = "NUL", ["RUST_LOG"] = "off"
                 });

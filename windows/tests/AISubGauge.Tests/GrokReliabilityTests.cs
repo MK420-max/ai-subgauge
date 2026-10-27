@@ -288,6 +288,65 @@ internal static partial class Program
                 }
             }
         });
+        AsyncTest("refresh with scratch root cleans it after successful RPC", async () =>
+        {
+            string scratchRoot = Path.Combine(Path.GetTempPath(), "aisubgauge-refresh-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var clock = new FakeClock();
+                var refresh = new GrokCliRefresh(new ReadbackSource(() => new Credential(Jwt, "user", "client", clock.Now.AddHours(2))),
+                    clock, _ => new FakeRpc((_, _) => Parse("{}")), scratchRoot: scratchRoot);
+                var result = await refresh.RefreshAsync(new Credential(Secret, "user", "client", clock.Now.AddSeconds(-1)), default);
+                Equal(result.Expires!.Value, clock.Now.AddHours(2));
+                Check(Directory.Exists(scratchRoot)); Equal(Directory.GetFileSystemEntries(scratchRoot).Length, 0);
+            }
+            finally { if (Directory.Exists(scratchRoot)) Directory.Delete(scratchRoot, true); }
+        });
+        AsyncTest("refresh with scratch root cleans it after RPC failure", async () =>
+        {
+            string scratchRoot = Path.Combine(Path.GetTempPath(), "aisubgauge-refresh-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var clock = new FakeClock();
+                var refresh = new GrokCliRefresh(new ReadbackSource(() => new Credential(Jwt, "user", "client", clock.Now.AddHours(2))),
+                    clock, _ => new FakeRpc((_, _) => throw new SafeFailure(Fault.Network)), scratchRoot: scratchRoot);
+                try { await refresh.RefreshAsync(new Credential(Secret, "user", "client", clock.Now.AddSeconds(-1)), default); Check(false); }
+                catch (SafeFailure) { }
+                Check(Directory.Exists(scratchRoot)); Equal(Directory.GetFileSystemEntries(scratchRoot).Length, 0);
+            }
+            finally { if (Directory.Exists(scratchRoot)) Directory.Delete(scratchRoot, true); }
+        });
+        AsyncTest("refresh with scratch root cleans it after stale readback", async () =>
+        {
+            string scratchRoot = Path.Combine(Path.GetTempPath(), "aisubgauge-refresh-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var clock = new FakeClock();
+                var refresh = new GrokCliRefresh(new ReadbackSource(() => new Credential(Secret, "user", "client", clock.Now)),
+                    clock, _ => new FakeRpc((_, _) => Parse("{}")), scratchRoot: scratchRoot);
+                try { await refresh.RefreshAsync(new Credential(Secret, "user", "client", clock.Now.AddSeconds(-1)), default); Check(false); }
+                catch (SafeFailure failure) { Equal(failure.Fault, Fault.RefreshFailed); }
+                Check(Directory.Exists(scratchRoot)); Equal(Directory.GetFileSystemEntries(scratchRoot).Length, 0);
+            }
+            finally { if (Directory.Exists(scratchRoot)) Directory.Delete(scratchRoot, true); }
+        });
+        Test("refresh cleanup retries transient failures and logs once when exhausted", () =>
+        {
+            string scratchRoot = Path.Combine(Path.GetTempPath(), "aisubgauge-cleanup-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(scratchRoot);
+                int calls = 0; var messages = new List<string>();
+                RefreshCleanup.TryDelete(scratchRoot, new(new(), messages.Add),
+                    _ => { if (++calls < 3) throw new IOException("busy"); }, _ => { });
+                Equal(calls, 3); Equal(messages.Count, 0);
+                calls = 0; messages.Clear();
+                RefreshCleanup.TryDelete(scratchRoot, new(new(), messages.Add),
+                    _ => { ++calls; throw new IOException("busy"); }, _ => { });
+                Equal(calls, 3); Equal(messages.Single(), "RefreshCleanupFailed");
+            }
+            finally { if (Directory.Exists(scratchRoot)) Directory.Delete(scratchRoot, true); }
+        });
     }
     private sealed class DeniedExecutableFiles(VerificationStatus status) : IExecutableFiles
     {
