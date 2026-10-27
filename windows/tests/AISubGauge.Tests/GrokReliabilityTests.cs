@@ -10,6 +10,10 @@ internal static partial class Program
         internal int Count { get; private set; }
         public Task<Credential> RefreshAsync(Credential expected, CancellationToken cancellation) => Task.FromResult(action(++Count, expected));
     }
+    private sealed class ReadbackSource(Func<Credential?> read) : ICredentialSource
+    {
+        public Task<Credential?> ReadAsync(Vendor vendor, CancellationToken cancellation) => Task.FromResult(read());
+    }
     private static SubscriptionProvider Reliable(FakeClock clock, ICredentialSource source, IGrokRefresh refresh,
         GrokLastGoodStore? store = null) => new(Vendor.Grok, source, clock, new(), new(new()),
             new Handler(_ => Response(Billing)), refresh, lastGoodStore: store, jitter: () => 0);
@@ -17,6 +21,71 @@ internal static partial class Program
     private static void RunGrokReliabilityTests()
     {
         RunVerifierReliabilityTests();
+        foreach (string state in new[] { "expired", "expires now", "missing expiry", "invalid expiry", "missing credential" })
+        AsyncTest($"successful refresh RPC with {state} readback follows full backoff and recovers", async () =>
+        {
+            var clock = new FakeClock();
+            var expected = new Credential(Secret, "user", "client", clock.Now.AddMinutes(31));
+            var sessions = new List<FakeRpc>();
+            bool written = false;
+            var readback = new ReadbackSource(() => written
+                ? new Credential(Jwt, "user", "client", clock.Now.AddHours(2))
+                : state switch
+                {
+                    "missing credential" => null,
+                    // CredentialFiles reports an unparseable expires_at as InvalidData.
+                    "invalid expiry" => throw new SafeFailure(Fault.InvalidData),
+                    "missing expiry" => new Credential(Secret, "user", "client"),
+                    "expires now" => new Credential(Secret, "user", "client", clock.Now),
+                    _ => new Credential(Secret, "user", "client", clock.Now.AddSeconds(-1))
+                });
+            var refresh = new GrokCliRefresh(readback, clock, _ =>
+            {
+                var rpc = new FakeRpc((_, _) => Parse("{}")); sessions.Add(rpc); return rpc;
+            });
+            using var provider = Reliable(clock, new Source(expected), refresh);
+            var good = await provider.FetchAsync(); clock.Advance(60);
+            int count = 0;
+            foreach (int seconds in new[] { 30, 60, 120, 300, 600, 900, 900 })
+            {
+                var failed = await provider.FetchAsync(); ++count;
+                Equal(sessions.Count, count); Check(sessions[^1].Disposed);
+                Check(sessions[^1].Methods.SequenceEqual(new[] { "initialize", "_x.ai/auth/getBearerToken" }));
+                Equal(failed.Fault, state == "invalid expiry" ? Fault.Network : Fault.RefreshFailed);
+                Check(failed.Stale); Equal(failed.Weekly, good.Weekly); Equal(failed.Updated, good.Updated);
+                Equal(provider.NextBackgroundRefresh, clock.Now.AddSeconds(seconds));
+                clock.Advance(seconds - 1); await provider.FetchAsync(); Equal(sessions.Count, count);
+                clock.Advance(1);
+            }
+            written = true;
+            var recovered = await provider.FetchAsync(); Equal(sessions.Count, 8);
+            Equal(recovered.Fault, Fault.None); Check(!recovered.Stale);
+            Equal(provider.RefreshPolicy.Failures, 0); Equal(provider.RefreshPolicy.LastFailure, null);
+            Equal(provider.NextBackgroundRefresh, clock.Now.AddMinutes(90));
+        });
+        foreach (string rejection in new[] { "401", "403", "invalid_grant", "user mismatch", "client mismatch" })
+        AsyncTest($"refresh {rejection} stops retries until credentials change", async () =>
+        {
+            var clock = new FakeClock();
+            var source = new ChangingSource(new Credential(Secret, "user", "client", clock.Now.AddSeconds(-1)));
+            var readback = new Source(new Credential(Jwt,
+                rejection == "user mismatch" ? "other-user" : "user",
+                rejection == "client mismatch" ? "other-client" : "client", clock.Now.AddHours(2)));
+            int calls = 0;
+            var refresh = new GrokCliRefresh(readback, clock, _ =>
+            {
+                ++calls;
+                return new FakeRpc((id, _) => id != 2 || rejection.EndsWith("mismatch") ? Parse("{}")
+                    : throw RpcSession.RpcError(Parse(rejection == "invalid_grant"
+                        ? "{\"data\":{\"error\":\"invalid_grant\"}}" : "{\"code\":" + rejection + "}")));
+            });
+            using var provider = Reliable(clock, source, refresh);
+            Equal((await provider.FetchAsync()).Fault, Fault.SignIn);
+            Equal(provider.NextBackgroundRefresh, DateTimeOffset.MaxValue);
+            clock.Advance(86400); Equal((await provider.FetchAsync()).Fault, Fault.SignIn); Equal(calls, 1);
+            source.Value = new Credential(Jwt, "user", "client", clock.Now.AddHours(2));
+            Equal((await provider.FetchAsync()).Fault, Fault.None); Equal(provider.RefreshPolicy.Failures, 0);
+        });
         AsyncTest("expired token + refresh 401 preserves last-good timestamp and offers bilingual sign-in", async () =>
         {
             var clock = new FakeClock();

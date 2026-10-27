@@ -243,30 +243,35 @@ public sealed class AuthenticodeSignatures(IExecutableSignatures? verifier = nul
     private readonly TimeSpan gateTimeout = gateTimeout ?? (timeout ?? TimeSpan.FromSeconds(5)) + TimeSpan.FromSeconds(1);
     private readonly TimeProvider clock = clock ?? TimeProvider.System;
     private readonly SafeLog? log = log;
-    private sealed record CachedSignature(ExecutableFileIdentity Identity, ExecutableSignature Signature, long CheckedAt);
+    private sealed record CachedSignature(ExecutableFileIdentity Identity, string Sha256, ExecutableSignature Signature, long CheckedAt);
     private readonly Dictionary<string, CachedSignature> cache = new(StringComparer.OrdinalIgnoreCase);
-    public ExecutableSignature Verify(string path) => VerifyCore(path, null);
+    public ExecutableSignature Verify(string path) => VerifyCore(path, null, null);
     public ExecutableSignature Verify(string path, Stream lease)
     {
         // Only a validated, retained file handle can supply cache identity. Path-only diagnostics
         // and synthetic streams always perform verification and cannot populate the cache.
         var identity = lease is FileStream file ? LocalFiles.Identity(path, file.SafeFileHandle) : (ExecutableFileIdentity?)null;
+        var sha256 = lease is FileStream retained ? LocalFiles.ContentHash(retained.SafeFileHandle) : null;
         VerificationTrace.Step(VerificationStage.Signature);
-        return VerifyCore(path, identity);
+        return VerifyCore(path, identity, sha256);
     }
-    private bool TryCached(ExecutableFileIdentity? identity, out ExecutableSignature signature)
+    private bool TryCached(ExecutableFileIdentity? identity, string? sha256, out ExecutableSignature signature)
     {
         lock (cache)
         {
-            if (identity is { } key && cache.TryGetValue(key.FullPath, out var entry) && entry.Identity == key &&
-                clock.GetElapsedTime(entry.CheckedAt) < TimeSpan.FromHours(1))
-            { signature = entry.Signature; return true; }
+            if (identity is { } key && cache.TryGetValue(key.FullPath, out var entry))
+            {
+                if (entry.Identity == key && entry.Sha256 == sha256 &&
+                    clock.GetElapsedTime(entry.CheckedAt) < TimeSpan.FromHours(1))
+                { signature = entry.Signature; return true; }
+                cache.Remove(key.FullPath);
+            }
         }
         signature = default; return false;
     }
-    private ExecutableSignature VerifyCore(string path, ExecutableFileIdentity? identity)
+    private ExecutableSignature VerifyCore(string path, ExecutableFileIdentity? identity, string? sha256)
     {
-        if (TryCached(identity, out var cached)) return cached;
+        if (TryCached(identity, sha256, out var cached)) return cached;
         // Never wait under the bookkeeping lock: other callers must be able to enter after
         // the worker releases the semaphore. Ordinary concurrent Codex/Grok checks queue here.
         bool busy = !Gate.Wait(gateTimeout), reportBusy = false;
@@ -277,7 +282,7 @@ public sealed class AuthenticodeSignatures(IExecutableSignatures? verifier = nul
         }
         if (reportBusy) (log ?? Executables.Log).Write(LocalStatus.VerifierBusyRepeated);
         if (busy) return new(SignatureStatus.Invalid, Diagnostic: VerificationStatus.VerifierBusy);
-        if (TryCached(identity, out cached)) { Gate.Release(); return cached; }
+        if (TryCached(identity, sha256, out cached)) { Gate.Release(); return cached; }
         Task<ExecutableSignature> worker;
         try
         {
@@ -296,12 +301,12 @@ public sealed class AuthenticodeSignatures(IExecutableSignatures? verifier = nul
             var signature = worker.WaitAsync(timeout).GetAwaiter().GetResult();
             // Only the waiting caller can cache a timely success. A worker finishing after
             // timeout never caches its result. Publisher/chain pins are also checked on every resolve.
-            if (identity is { } key && (CodexPublisher.Accepts(signature) || GrokPublisher.Accepts(signature)))
+            if (identity is { } key && sha256 is not null && (CodexPublisher.Accepts(signature) || GrokPublisher.Accepts(signature)))
             {
                 lock (cache)
                 {
                     if (cache.Count >= 128) cache.Clear();
-                    cache[key.FullPath] = new(key, signature, clock.GetTimestamp());
+                    cache[key.FullPath] = new(key, sha256, signature, clock.GetTimestamp());
                 }
             }
             return signature;

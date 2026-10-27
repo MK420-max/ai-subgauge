@@ -132,7 +132,8 @@ public sealed class GrokCliRefresh(ICredentialSource source, IClock clock, Func<
             {
                 // Keep CLI scratch state within the new app's directory; never touch 1.x settings.
                 var current = await SafeFailure.AtAsync(FailureStage.ReadCredentials, () => source.ReadAsync(Vendor.Grok, cancellation)).ConfigureAwait(false);
-                if (current is null || current.UserId != expected.UserId || current.ClientId != expected.ClientId) throw new SafeFailure(Fault.RefreshFailed);
+                if (current is null) throw new SafeFailure(Fault.RefreshFailed);
+                if (current.UserId != expected.UserId || current.ClientId != expected.ClientId) throw new SafeFailure(Fault.SignIn);
                 directory = Path.Combine(SettingsStore.DefaultDirectory, "refresh", Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(directory);
                 using var executable = await Executables.OpenAsync("grok").ConfigureAwait(false);
@@ -150,7 +151,11 @@ public sealed class GrokCliRefresh(ICredentialSource source, IClock clock, Func<
                 await session.CallAsync(2, "_x.ai/auth/getBearerToken", new { }, cancellation).ConfigureAwait(false);
             }
             var refreshed = await SafeFailure.AtAsync(FailureStage.ReadCredentials, () => source.ReadAsync(Vendor.Grok, cancellation)).ConfigureAwait(false);
-            if (refreshed is null || refreshed.UserId != expected.UserId || refreshed.ClientId != expected.ClientId || refreshed.Expires is null || refreshed.Expires <= clock.Now) throw new SafeFailure(Fault.RefreshFailed);
+            if (refreshed is not null && (refreshed.UserId != expected.UserId || refreshed.ClientId != expected.ClientId))
+                throw new SafeFailure(Fault.SignIn);
+            // A successful RPC can precede the CLI's credential write. Keep retrying
+            // missing/stale expiry; only an explicit authentication rejection stops retries.
+            if (refreshed is null || refreshed.Expires is null || refreshed.Expires <= clock.Now) throw new SafeFailure(Fault.RefreshFailed);
             return refreshed;
         }
         catch (Exception error)

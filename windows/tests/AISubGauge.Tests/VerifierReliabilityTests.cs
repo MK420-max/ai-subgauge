@@ -103,16 +103,60 @@ internal static partial class Program
                 }
             }
         });
-        Test("successful leased identity cache skips native verification until one-hour expiry", () =>
+        Test("equal leased SHA-256 skips native verification until one-hour expiry without changing position", () =>
         {
             string path = VerificationFile(); var clock = new VerificationClock();
             var native = new FakeSignatures(GrokFixture()); var verifier = new AuthenticodeSignatures(native, clock: clock);
-            ExecutableSignature Verify() { using var lease = VerificationLease(path); return verifier.Verify(path, lease); }
+            ExecutableSignature Verify()
+            {
+                using var lease = VerificationLease(path); lease.Position = 7;
+                var signature = verifier.Verify(path, lease); Equal(lease.Position, 7L); return signature;
+            }
             Check(GrokPublisher.Accepts(Verify())); Check(GrokPublisher.Accepts(Verify())); Equal(native.Calls, 1);
             clock.Advance(TimeSpan.FromMinutes(59)); Check(GrokPublisher.Accepts(Verify())); Equal(native.Calls, 1);
             clock.Advance(TimeSpan.FromMinutes(1)); Check(GrokPublisher.Accepts(Verify())); Equal(native.Calls, 2);
             // Path-only calls cannot reuse or populate the leased cache.
             verifier.Verify(path); verifier.Verify(path); Equal(native.Calls, 4);
+        });
+        Test("same-size tampering with unchanged file identity and mtime evicts cache and is rejected", () =>
+        {
+            string path = VerificationFile();
+            byte[] original = File.ReadAllBytes(path), tampered = (byte[])original.Clone();
+            tampered[^1] ^= 1;
+            var modified = File.GetLastWriteTimeUtc(path);
+            int calls = 0;
+            var verifier = new AuthenticodeSignatures(new DelegateSignatures(target =>
+            {
+                ++calls;
+                return File.ReadAllBytes(target).SequenceEqual(original) ? GrokFixture() : new(SignatureStatus.Invalid);
+            }));
+            ExecutableFileIdentity identity;
+            using (var lease = VerificationLease(path))
+            {
+                identity = LocalFiles.Identity(path, lease.SafeFileHandle);
+                Check(GrokPublisher.Accepts(verifier.Verify(path, lease))); Equal(calls, 1);
+            }
+            void Rewrite(byte[] content)
+            {
+                // Modify in place, preserving file index as well as length and timestamp.
+                using (var writer = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None)) writer.Write(content);
+                File.SetLastWriteTimeUtc(path, modified);
+            }
+            Rewrite(tampered);
+            using (var lease = VerificationLease(path))
+            {
+                Equal(LocalFiles.Identity(path, lease.SafeFileHandle), identity);
+                Equal(verifier.Verify(path, lease).Status, SignatureStatus.Invalid); Equal(calls, 2);
+                Equal(verifier.Verify(path, lease).Status, SignatureStatus.Invalid); Equal(calls, 3);
+            }
+            Rewrite(original);
+            using (var lease = VerificationLease(path))
+            {
+                Equal(LocalFiles.Identity(path, lease.SafeFileHandle), identity);
+                // Restoring the original bytes must reverify: the old successful entry was evicted.
+                Check(GrokPublisher.Accepts(verifier.Verify(path, lease))); Equal(calls, 4);
+                Check(GrokPublisher.Accepts(verifier.Verify(path, lease))); Equal(calls, 4);
+            }
         });
         Test("cache invalidates on last-write, size, file replacement and full-path changes", () =>
         {

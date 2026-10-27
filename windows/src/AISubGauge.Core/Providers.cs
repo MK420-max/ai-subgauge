@@ -203,7 +203,8 @@ public sealed class SubscriptionProvider : ProviderBase, IDisposable
             if (refresh is null) throw new SafeFailure(Fault.RefreshFailed);
             var result = await refresh.RefreshAsync(expected, cancellation).ConfigureAwait(false);
             result.Protect(redactor);
-            if (result.UserId != expected.UserId || result.ClientId != expected.ClientId || result.Expires is null || result.Expires <= Clock.Now) throw new SafeFailure(Fault.RefreshFailed);
+            if (result.UserId != expected.UserId || result.ClientId != expected.ClientId) throw new SafeFailure(Fault.SignIn);
+            if (result.Expires is null || result.Expires <= Clock.Now) throw new SafeFailure(Fault.RefreshFailed);
             renewalSource = expected; renewed = result; activeExpiry = result.Expires; RefreshPolicy.Reset(); return result;
         }
         catch (Exception error)

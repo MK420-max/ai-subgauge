@@ -303,7 +303,7 @@ internal static partial class Program
         AsyncTest("Grok refuses account-changing refresh", async () =>
         {
             using var provider = Make(Vendor.Grok, new Handler(_ => Response("", HttpStatusCode.Unauthorized)), ValidSource(), new Renewal(new Credential(Jwt, "different-user", "client", Clock.Now.AddHours(2))));
-            Equal((await provider.FetchAsync()).Fault, Fault.RefreshFailed);
+            Equal((await provider.FetchAsync()).Fault, Fault.SignIn);
         });
         AsyncTest("Grok CLI refresh protocol and readback", async () =>
         {

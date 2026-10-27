@@ -20,9 +20,9 @@ public sealed class GrokRefreshPolicy(IClock clock, Func<double>? jitter = null)
     {
         Failures = Math.Min(Failures + 1, SignInThreshold);
         LastFailure = failure;
-        bool transient = failure.Fault is Fault.Network or Fault.Timeout or Fault.VerifierUnresponsive ||
+        bool transient = failure.Fault is Fault.Network or Fault.Timeout or Fault.VerifierUnresponsive or Fault.RefreshFailed ||
             failure.Verification?.Status is VerificationStatus.VerifierBusy or VerificationStatus.VerifierTimeout;
-        if (failure.Fault is Fault.SignIn or Fault.RefreshFailed) { Stop(failure); return; }
+        if (failure.Fault == Fault.SignIn) { Stop(failure); return; }
         // A repaired/reinstalled CLI must be discoverable without changing credentials or restarting.
         if (!transient) { NextAttempt = clock.Now.AddMinutes(15); return; }
         double sample = Math.Clamp((jitter ?? Random.Shared.NextDouble)(), 0, 1);

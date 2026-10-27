@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 
@@ -80,6 +81,22 @@ internal static class LocalFiles
             ((ulong)info.IndexHigh << 32) | info.IndexLow,
             ((ulong)info.SizeHigh << 32) | info.SizeLow,
             ((ulong)(uint)info.LastWriteTime.dwHighDateTime << 32) | (uint)info.LastWriteTime.dwLowDateTime);
+    }
+
+    internal static string ContentHash(SafeFileHandle handle)
+    {
+        // Read the retained, write-excluded lease, never reopen the path. Explicit offsets
+        // cover the whole file without changing the caller's stream position.
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[64 * 1024];
+        long offset = 0;
+        int read;
+        while ((read = RandomAccess.Read(handle, buffer, offset)) != 0)
+        {
+            hash.AppendData(buffer, 0, read);
+            offset += read;
+        }
+        return Convert.ToHexString(hash.GetHashAndReset());
     }
 
     private static FileStream Open(string path, long maximum, bool createNew)
