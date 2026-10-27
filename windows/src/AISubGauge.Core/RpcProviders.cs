@@ -9,14 +9,12 @@ public static class RefreshCleanup
     public static void TryDelete(string directory, SafeLog log, Action<string>? delete = null, Action<int>? sleep = null)
     {
         Action<string> remove = delete ?? (path => Directory.Delete(path, true));
-        bool managed = delete is null;
-        if (managed && !Directory.Exists(directory)) return;
         for (int attempt = 1; attempt <= 3; ++attempt)
         {
             try { remove(directory); return; }
             catch (Exception error)
             {
-                if (managed && !Directory.Exists(directory)) return;
+                if (error is DirectoryNotFoundException) return;
                 if (error is not (IOException or UnauthorizedAccessException) || attempt == 3)
                 {
                     log.Write(LocalStatus.RefreshCleanupFailed);

@@ -6,6 +6,26 @@ internal static partial class Program
 {
     private static void RunRefreshRegressionTests()
     {
+        Test("refresh cleanup retries access denied three times and logs once", () =>
+        {
+            int calls = 0;
+            var delays = new List<int>();
+            var messages = new List<string>();
+            RefreshCleanup.TryDelete("scratch-fixture", new(new(), messages.Add),
+                _ => { ++calls; throw new UnauthorizedAccessException(); }, delays.Add);
+            Equal(calls, 3);
+            Check(delays.SequenceEqual(new[] { 100, 100 }));
+            Equal(messages.Single(), "RefreshCleanupFailed");
+        });
+        Test("refresh cleanup treats a missing directory as clean without retry or log", () =>
+        {
+            int calls = 0;
+            var delays = new List<int>();
+            var messages = new List<string>();
+            RefreshCleanup.TryDelete("scratch-fixture", new(new(), messages.Add),
+                _ => { ++calls; throw new DirectoryNotFoundException(); }, delays.Add);
+            Equal(calls, 1); Equal(delays.Count, 0); Equal(messages.Count, 0);
+        });
         AsyncTest("valid token with one RefreshFailed retries until the existing threshold", async () =>
         {
             var clock = new FakeClock();
