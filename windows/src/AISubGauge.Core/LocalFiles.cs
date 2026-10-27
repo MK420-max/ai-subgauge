@@ -35,6 +35,7 @@ internal sealed class LocalFileFailure(VerificationStatus status) : IOException(
 internal readonly record struct ExecutableFileIdentity(string FullPath, uint VolumeSerial, ulong FileIndex, ulong Size, ulong LastWriteTime);
 internal static class LocalFiles
 {
+    internal const long MaximumExecutableBytes = 512L * 1024 * 1024;
     private const uint OpenReparsePoint = 0x00200000;
     private const uint BackupSemantics = 0x02000000;
     private const uint Overlapped = 0x40000000;
@@ -83,16 +84,19 @@ internal static class LocalFiles
             ((ulong)(uint)info.LastWriteTime.dwHighDateTime << 32) | (uint)info.LastWriteTime.dwLowDateTime);
     }
 
-    internal static string ContentHash(SafeFileHandle handle)
+    internal static string ContentHash(SafeFileHandle handle, long maximum = MaximumExecutableBytes)
     {
         // Read the retained, write-excluded lease, never reopen the path. Explicit offsets
         // cover the whole file without changing the caller's stream position.
+        maximum = Math.Min(maximum, MaximumExecutableBytes);
+        if (RandomAccess.GetLength(handle) > maximum) throw new IOException("Executable exceeds hashing limit.");
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var buffer = new byte[64 * 1024];
         long offset = 0;
         int read;
         while ((read = RandomAccess.Read(handle, buffer, offset)) != 0)
         {
+            if (read > maximum - offset) throw new IOException("Executable exceeds hashing limit.");
             hash.AppendData(buffer, 0, read);
             offset += read;
         }

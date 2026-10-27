@@ -6,7 +6,11 @@ using System.Globalization;
 namespace AISubGauge.Core;
 
 public interface IProvider { Vendor Vendor { get; } Task<Snapshot> FetchAsync(CancellationToken cancellation = default); }
-public interface ICredentialSource { Task<Credential?> ReadAsync(Vendor vendor, CancellationToken cancellation); }
+public interface ICredentialSource
+{
+    Task<Credential?> ReadAsync(Vendor vendor, CancellationToken cancellation);
+    Task<Credential?> ReadAfterRefreshAsync(CancellationToken cancellation) => ReadAsync(Vendor.Grok, cancellation);
+}
 public interface IGrokRefresh { Task<Credential> RefreshAsync(Credential expected, CancellationToken cancellation); }
 public interface IGrokCache { Task<Snapshot> ReadAsync(CancellationToken cancellation); }
 
@@ -191,8 +195,8 @@ public sealed class SubscriptionProvider : ProviderBase, IDisposable
         bool verification = snapshot.Fault == Fault.GrokVerificationFailed &&
             failure?.Verification?.Status is not (VerificationStatus.VerifierBusy or VerificationStatus.VerifierTimeout);
         var state = verification ? GrokState.VerificationFailed :
-            snapshot.Fault is Fault.SignIn or Fault.RefreshFailed || RefreshPolicy.Failures >= GrokRefreshPolicy.SignInThreshold ||
-            (RefreshPolicy.LastFailure is not null && activeExpiry <= Clock.Now)
+            snapshot.Fault == Fault.SignIn || RefreshPolicy.Failures >= GrokRefreshPolicy.SignInThreshold ||
+            activeExpiry <= Clock.Now
                 ? GrokState.SignInExpired : GrokState.Retrying;
         return (lastGood ?? snapshot) with { Fault = snapshot.Fault, Stale = lastGood is not null, GrokState = state };
     }

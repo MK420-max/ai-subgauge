@@ -169,7 +169,7 @@ public sealed class GrokCliRefresh(ICredentialSource source, IClock clock, Func<
                 // Discard the RPC bearer; the official CLI owns credential rotation and persistence.
                 await session.CallAsync(2, "_x.ai/auth/getBearerToken", new { }, cancellation).ConfigureAwait(false);
             }
-            var refreshed = await SafeFailure.AtAsync(FailureStage.ReadCredentials, () => source.ReadAsync(Vendor.Grok, cancellation)).ConfigureAwait(false);
+            var refreshed = await SafeFailure.AtAsync(FailureStage.ReadCredentials, () => source.ReadAfterRefreshAsync(cancellation)).ConfigureAwait(false);
             if (refreshed is not null && (refreshed.UserId != expected.UserId || refreshed.ClientId != expected.ClientId))
                 throw new SafeFailure(Fault.SignIn);
             // A successful RPC can precede the CLI's credential write. Keep retrying

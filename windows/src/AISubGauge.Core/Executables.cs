@@ -141,10 +141,10 @@ public sealed class ExecutableResolver(IExecutableFiles files, IExecutableSignat
     }
     private static bool Same(string? a, string b) => string.Equals(a, Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
 }
-internal sealed class ExecutableFiles : IExecutableFiles
+internal sealed class ExecutableFiles(long maximum = LocalFiles.MaximumExecutableBytes) : IExecutableFiles
 {
     public IEnumerable<string> Directories(string path) => Directory.GetDirectories(path);
-    public Stream OpenRead(string path) => LocalFiles.OpenRead(path, long.MaxValue);
+    public Stream OpenRead(string path) => LocalFiles.OpenRead(path, Math.Min(maximum, LocalFiles.MaximumExecutableBytes));
 }
 public static class Executables
 {

@@ -16,6 +16,10 @@ internal static partial class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.SequenceEqual(new[] { "--refresh-regressions" }))
+        {
+            RunRefreshRegressionTests(); Console.WriteLine($"Refresh regressions: {passed} PASS, {failed} FAIL"); return failed == 0 ? 0 : 1;
+        }
         if (args.SequenceEqual(new[] { "--diag-grok" })) return GrokVerificationDiagnostic.Run(Console.Out);
         if (args.SequenceEqual(new[] { "--grok-reliability" }))
         {
@@ -43,6 +47,7 @@ internal static partial class Program
         RunTrayPercentageTests();
         RunGrokSignInTests();
         RunGrokReliabilityTests();
+        RunRefreshRegressionTests();
         Test("quota color boundaries (light/dark)", () =>
         {
             foreach (bool dark in new[] { false, true })

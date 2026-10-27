@@ -7,7 +7,9 @@ public sealed class CredentialFiles(IClock clock) : ICredentialSource
 {
     private static string UserFile(params string[] parts) => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), Path.Combine(parts));
     public static string GrokPath => Environment.GetEnvironmentVariable("GROK_AUTH_PATH") ?? Path.Combine(Environment.GetEnvironmentVariable("GROK_HOME") ?? UserFile(".grok"), "auth.json");
-    public async Task<Credential?> ReadAsync(Vendor vendor, CancellationToken cancellation)
+    public Task<Credential?> ReadAsync(Vendor vendor, CancellationToken cancellation) => ReadAsync(vendor, cancellation, false);
+    public Task<Credential?> ReadAfterRefreshAsync(CancellationToken cancellation) => ReadAsync(Vendor.Grok, cancellation, true);
+    private async Task<Credential?> ReadAsync(Vendor vendor, CancellationToken cancellation, bool requireExplicitExpiry)
     {
         if (vendor == Vendor.Claude)
         {
@@ -22,9 +24,13 @@ public sealed class CredentialFiles(IClock clock) : ICredentialSource
         if (vendor != Vendor.Grok) return null;
         if (!File.Exists(GrokPath)) return null;
         using var auth = await ReadFileAsync(GrokPath, cancellation).ConfigureAwait(false);
-        if (auth.RootElement.ValueKind != JsonValueKind.Object) throw new SafeFailure(Fault.InvalidData);
+        return ParseGrok(auth.RootElement, requireExplicitExpiry);
+    }
+    internal Credential ParseGrok(JsonElement root, bool requireExplicitExpiry)
+    {
+        if (root.ValueKind != JsonValueKind.Object) throw new SafeFailure(Fault.InvalidData);
         Credential? selected = null;
-        foreach (var entry in auth.RootElement.EnumerateObject())
+        foreach (var entry in root.EnumerateObject())
         {
             var value = entry.Value;
             if (Json.String(value, "auth_mode") is not ("oidc" or "external") || Json.String(value, "oidc_issuer") is not ("https://auth.x.ai" or "https://auth.x.ai/")) continue;
@@ -32,6 +38,8 @@ public sealed class CredentialFiles(IClock clock) : ICredentialSource
             var created = Json.Date(value, "create_time");
             if (!Header(token, 32768) || !Header(user, 256) || !Header(client, 256) || entry.Name != "https://auth.x.ai::" + client || created is null || created > clock.Now.AddMinutes(5)) throw new SafeFailure(Fault.SignInRequired);
             var expiry = Json.Date(value, "expires_at");
+            // Only a persisted explicit expiry can confirm that refresh completed.
+            if (requireExplicitExpiry && expiry is null) throw new SafeFailure(Fault.RefreshFailed);
             if (Json.Get(value, "expires_at").ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null) && expiry is null) throw new SafeFailure(Fault.InvalidData);
             var next = new Credential(token!, user!, client!, expiry ?? created.Value.AddDays(30));
             if (selected is not null && selected.UserId != next.UserId) throw new SafeFailure(Fault.SignInRequired);
