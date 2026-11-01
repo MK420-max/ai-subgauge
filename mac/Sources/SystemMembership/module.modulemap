@@ -1,0 +1,4 @@
+module SystemMembership [system] {
+    header "membership.h"
+    export *
+}

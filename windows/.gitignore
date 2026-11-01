@@ -1,0 +1,10 @@
+design.zip
+bin/
+obj/
+artifacts/
+*.log
+
+.dotnethome/
+.nuget/
+codex-run*.txt
+

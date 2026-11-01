@@ -1,0 +1,25 @@
+# Python 3.11; PyPI hashes for runtime dependencies of generate-brand.py.
+# Install with: python3.11 -m pip install --require-hashes --only-binary=:all: -r shared/brand/requirements.lock
+CairoSVG==2.9.1 \
+    --hash=sha256:f91c5628e834be024a0ed4544d76261cd84016a4c73bcdf26c386495825c05a1
+cairocffi==1.7.1 \
+    --hash=sha256:9803a0e11f6c962f3b0ae2ec8ba6ae45e957a146a004697a1ac1bbf16b073b3f
+cssselect2==0.8.0 \
+    --hash=sha256:46fc70ebc41ced7a32cd42d58b1884d72ade23d21e5a4eaaf022401c13f0e76e
+defusedxml==0.7.1 \
+    --hash=sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61
+tinycss2==1.4.0 \
+    --hash=sha256:3a49cf47b7675da0b15d0c6e1df8df4ebd96e9394bb905a5775adb0d884c5289
+webencodings==0.5.1 \
+    --hash=sha256:a0af1213f3c2226497a97e2b3aa01a7e4bee4f403f95be16fc9acd2947514a78
+pycparser==2.23 \
+    --hash=sha256:e5c6e8d3fbad53479cab09ac03729e0a9faf2bee3db8208a550daf5af81a5934
+cffi==2.1.1 \
+    --hash=sha256:34e261f78cb6ceaaa36f42f2613f4380d94d9c759a9c73c769ee6e0247364632 \
+    --hash=sha256:398aff33cee2767e3e781d2554c54bd0dff386bb437581e0d8011fde1a942ec1 \
+    --hash=sha256:c8d2c9fd1f2d16f780d15127abb050d13d1a76c03a4bd87d7e4980e45e511e12 \
+    --hash=sha256:42f6930c31dc7f50732c9ae793c2786c7b6b044195967bbdde40bb9be81c4cc0
+Pillow==13.0.0 \
+    --hash=sha256:37290fbef0c73e2d51d594eb78fded7dc7170d1c3ad0a890269e6fd8c8c4e061 \
+    --hash=sha256:6f38f3f885a09cafc93fd667b1173a92f379e43785d635e7983c893f0da319fb \
+    --hash=sha256:d7710eb676e9bb68965cb045be0d333b4c0d7f9dfbaa7fbf121385b1588683d3

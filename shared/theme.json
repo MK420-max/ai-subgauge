@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "source": "Derived from shared/brand/app-light.svg and app-dark.svg (AI SubGauge logo, 2026-10-20)",
+  "themes": {
+    "light": {
+      "backgroundGradient": [
+        "#FCD789",
+        "#E9B48A",
+        "#C99AA6",
+        "#8A6CC0"
+      ],
+      "background": "#FBF3E8",
+      "surface": "#FFFFFF",
+      "surfaceAlt": "#F6E9DA",
+      "border": "#E4D2C4",
+      "textPrimary": "#2A2140",
+      "textSecondary": "#6B5F7A",
+      "accent": "#8A6CC0",
+      "accentAlt": "#E9A65A",
+      "barTrack": "#EADFD3",
+      "demo": "#C7832E",
+      "error": "#C2413A",
+      "panelBorder": "#FFFFFF66",
+      "glassOverlay": "#FFFFFF70",
+      "buttonFill": "#FFFFFF66",
+      "buttonBorder": "#FFFFFF99",
+      "divider": "#6B5F7A26",
+      "wave": "#FFFFFF40"
+    },
+    "dark": {
+      "backgroundGradient": [
+        "#2B3160",
+        "#1A1B42",
+        "#130F2E"
+      ],
+      "background": "#16173A",
+      "surface": "#1F2150",
+      "surfaceAlt": "#262A5E",
+      "border": "#34386E",
+      "textPrimary": "#EEF0FF",
+      "textSecondary": "#A8B0D8",
+      "accent": "#9FB4FF",
+      "accentAlt": "#C8D4F2",
+      "barTrack": "#2C3068",
+      "demo": "#F0B45A",
+      "error": "#FF7A70",
+      "panelBorder": "#C8D4F233",
+      "glassOverlay": "#C8D4F205",
+      "buttonFill": "#C8D4F214",
+      "buttonBorder": "#C8D4F240",
+      "divider": "#C8D4F226",
+      "wave": "#C8D4F208"
+    }
+  },
+  "quota": {
+    "high": "#2CAC6D",
+    "mid": "#E7B228",
+    "low": "#E04B52"
+  },
+  "star": [
+    "#FFD27A",
+    "#FF86B0",
+    "#55D8FA",
+    "#7063FB"
+  ],
+  "providers": {
+    "codex": "#6ED1B5",
+    "openaiAPI": "#6ED1B5",
+    "claude": "#DE9E73",
+    "anthropicAPI": "#DE9E73",
+    "grok": "#A8A6FA",
+    "xaiAPI": "#A8A6FA",
+    "geminiAPI": "#7AADFA",
+    "deepseekAPI": "#5E8AFF",
+    "openrouterAPI": "#BFA8F5",
+    "kimiAPI": "#8FC2FF",
+    "minimaxAPI": "#FF8C7A"
+  }
+}
